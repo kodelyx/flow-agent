@@ -251,7 +251,106 @@ class ExtensionBridge:
         await self._ws_server.wait_closed()
 
 
-# ─── Video Generation ───────────────────────────────────────
+# ─── Image Upload ────────────────────────────────────────────
+
+async def upload_image(bridge, image_path, project_id=DEFAULT_PROJECT):
+    """Upload a local image to Flow. Returns media_id."""
+    import base64
+    with open(image_path, 'rb') as f:
+        img_data = base64.b64encode(f.read()).decode()
+
+    body = {
+        "clientContext": {"tool": CLIENT_CTX["tool"], "projectId": project_id},
+        "imageBytes": img_data,
+    }
+
+    log.info('📷 Uploading image: %s', os.path.basename(image_path))
+    result = await bridge.api_request(ENDPOINTS["upload_image"], body)
+
+    status = result.get("status", 0)
+    data = result.get("data", {})
+    if status != 200:
+        err = data.get("error", {}).get("message", "Unknown") if isinstance(data, dict) else str(data)
+        log.error("❌ Image upload failed (%s): %s", status, err)
+        return None
+
+    media_id = data.get("mediaId") or data.get("name")
+    if not media_id and isinstance(data.get("media"), dict):
+        media_id = data["media"].get("name")
+    log.info('✅ Image uploaded! media_id=%s', media_id)
+
+    # Auto-save to media-id.js
+    if media_id:
+        media_id_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'media-id.js')
+        entries = {}
+        if os.path.exists(media_id_file):
+            with open(media_id_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if ' : ' in line:
+                        k, v = line.split(' : ', 1)
+                        entries[k.strip()] = v.strip()
+        entries[os.path.basename(image_path)] = media_id
+        with open(media_id_file, 'w') as f:
+            for k, v in sorted(entries.items()):
+                f.write(f'{k} : {v}\n')
+        log.info('📝 Updated media-id.js: %s → %s', os.path.basename(image_path), media_id)
+
+    return media_id
+
+
+# ─── Image → Video (I2V) ────────────────────────────────────
+
+async def generate_video_i2v(bridge, prompt, aspect, project_id, image_media_id, duration=8):
+    """Generate video from a start image. Returns list of media_ids."""
+    model_key = f"abra_t2v_{duration}s"
+
+    body = {
+        "mediaGenerationContext": {"batchId": str(uuid.uuid4())},
+        "clientContext": {
+            "projectId": project_id,
+            "tool": CLIENT_CTX["tool"],
+            "userPaygateTier": CLIENT_CTX["tier"],
+            "sessionId": f";{int(time.time() * 1000)}",
+            "recaptchaContext": {
+                "applicationType": CLIENT_CTX["recaptcha_app_type"],
+                "token": "",
+            },
+        },
+        "requests": [{
+            "aspectRatio": aspect,
+            "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
+            "videoModelKey": model_key,
+            "seed": random.randint(1, 9999),
+            "metadata": {},
+            "startImage": {"mediaId": image_media_id},
+        }],
+    }
+
+    log.info('🖼️→🎬 I2V: "%s" [%s] image=%s', prompt[:50], model_key, image_media_id[:12])
+    result = await bridge.api_request(ENDPOINTS["generate_i2v"], body)
+
+    status = result.get("status", 0)
+    if status != 200:
+        err = result.get("data", {})
+        if isinstance(err, dict):
+            err = err.get("error", {}).get("message", result.get("error", "Unknown"))
+        log.error("❌ I2V failed (%s): %s", status, err)
+        return None
+
+    data = result.get("data", {})
+    media = data.get("media", [])
+    if not media:
+        log.error("❌ No media in response")
+        return None
+
+    media_ids = [m.get("name") for m in media]
+    credits = data.get("remainingCredits", "?")
+    log.info("✅ I2V submitted! %d video(s), credits=%s", len(media_ids), credits)
+    return media_ids
+
+
+# ─── Text → Video (T2V) ─────────────────────────────────────
 
 async def generate_video(bridge, prompt, aspect, project_id, duration=10, count=1):
     """Submit video generation. Returns list of media_ids."""

@@ -29,6 +29,7 @@
     "generate_t2v":   "/v1/video:batchAsyncGenerateVideoText",
     "generate_i2v":   "/v1/video:batchAsyncGenerateVideoStartImage",
     "generate_edit":  "/v1/video:batchAsyncGenerateVideoEditVideo",
+    "upload_image":   "/v1/flow/uploadImage",
     "poll_status":    "/v1/video:batchCheckAsyncVideoGenerationStatus",
     "get_media":      "/v1/media/{media_id}",
     "get_credits":    "/v1/credits"
