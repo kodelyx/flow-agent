@@ -309,6 +309,62 @@ async def generate_video(bridge, prompt, aspect, project_id, duration=10, count=
     return media_ids
 
 
+async def edit_video(bridge, prompt, aspect, project_id, video_media_id, fps=24, duration=10):
+    """Submit video edit (V2V). Returns list of media_ids."""
+    end_frame = fps * duration
+
+    body = {
+        "mediaGenerationContext": {
+            "batchId": str(uuid.uuid4()),
+            "audioFailurePreference": "BLOCK_SILENCED_VIDEOS",
+        },
+        "clientContext": {
+            "projectId": project_id,
+            "tool": CLIENT_CTX["tool"],
+            "userPaygateTier": CLIENT_CTX["tier"],
+            "sessionId": f";{int(time.time() * 1000)}",
+            "recaptchaContext": {
+                "applicationType": CLIENT_CTX["recaptcha_app_type"],
+                "token": "",
+            },
+        },
+        "requests": [{
+            "aspectRatio": aspect,
+            "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
+            "videoModelKey": "abra_edit",
+            "seed": random.randint(1, 9999),
+            "metadata": {},
+            "videoInput": {
+                "mediaId": video_media_id,
+                "startFrameIndex": 0,
+                "endFrameIndex": end_frame,
+            },
+        }],
+    }
+
+    log.info('✂️ Editing: "%s" [abra_edit] media=%s', prompt[:50], video_media_id[:12])
+    result = await bridge.api_request(ENDPOINTS["generate_edit"], body)
+
+    status = result.get("status", 0)
+    if status != 200:
+        err = result.get("data", {})
+        if isinstance(err, dict):
+            err = err.get("error", {}).get("message", result.get("error", "Unknown"))
+        log.error("❌ Failed (%s): %s", status, err)
+        return None
+
+    data = result.get("data", {})
+    media = data.get("media", [])
+    if not media:
+        log.error("❌ No media in response")
+        return None
+
+    media_ids = [m.get("name") for m in media]
+    credits = data.get("remainingCredits", "?")
+    log.info("✅ Edit submitted! %d video(s), credits=%s", len(media_ids), credits)
+    return media_ids
+
+
 async def poll_status(bridge, media_id, project_id):
     """Poll until video ready."""
     body = {"media": [{"name": media_id, "projectId": project_id}]}
@@ -377,9 +433,17 @@ async def run(args):
     if not await bridge.wait_for_extension(timeout=30):
         return
 
-    media_ids = await generate_video(bridge, args.prompt, aspect, args.project_id,
-                                     duration=args.duration, count=args.count)
+    # V2V Edit mode
+    if args.edit:
+        media_ids = await edit_video(bridge, args.prompt, aspect, args.project_id,
+                                     video_media_id=args.edit, duration=args.duration)
+    else:
+        # T2V Generate mode
+        media_ids = await generate_video(bridge, args.prompt, aspect, args.project_id,
+                                         duration=args.duration, count=args.count)
+
     if not media_ids:
+        await bridge.close()
         return
 
     # Poll all videos
@@ -413,6 +477,8 @@ def main():
                         help="Video duration in seconds (default: 10)")
     parser.add_argument("--count", "-c", type=int, choices=[1, 2, 3, 4], default=1,
                         help="Number of videos to generate (default: 1)")
+    parser.add_argument("--edit", "-e", metavar="MEDIA_ID",
+                        help="Edit existing video (V2V). Pass the media ID from Flow UI")
     parser.add_argument("--project-id", "-p", default=DEFAULT_PROJECT)
     args = parser.parse_args()
 
