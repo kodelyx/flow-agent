@@ -37,10 +37,15 @@ WS_PORT = int(os.environ.get("WS_PORT", "9222"))
 HTTP_PORT = int(os.environ.get("HTTP_PORT", "8100"))
 API_KEY = "AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY"
 
-MODEL_KEY = "abra_t2v_10s"
-GENERATE_ENDPOINT = "/v1/video:batchAsyncGenerateVideoText"
-POLL_ENDPOINT = "/v1/video:batchCheckAsyncVideoGenerationStatus"
-MEDIA_ENDPOINT = "/v1/media/{media_id}"
+# ─── Load models config ─────────────────────────────────────
+_MODELS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models.json")
+with open(_MODELS_FILE) as _f:
+    MODELS = json.load(_f)
+
+ASPECTS = MODELS["aspects"]
+ENDPOINTS = MODELS["endpoints"]
+DURATIONS = MODELS["durations"]
+DEFAULT_DURATION = max(DURATIONS)
 
 POLL_INTERVAL = 10
 POLL_TIMEOUT = 420
@@ -246,8 +251,21 @@ class ExtensionBridge:
 
 # ─── Video Generation ───────────────────────────────────────
 
-async def generate_video(bridge, prompt, aspect, project_id):
-    """Submit video generation. Returns media_id."""
+async def generate_video(bridge, prompt, aspect, project_id, duration=10, count=1):
+    """Submit video generation. Returns list of media_ids."""
+    model_key = f"abra_t2v_{duration}s"
+
+    # Build request(s) — one per count
+    requests = []
+    for _ in range(count):
+        requests.append({
+            "aspectRatio": aspect,
+            "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
+            "videoModelKey": model_key,
+            "seed": random.randint(1, 9999),
+            "metadata": {},
+        })
+
     body = {
         "mediaGenerationContext": {"batchId": str(uuid.uuid4())},
         "clientContext": {
@@ -260,18 +278,12 @@ async def generate_video(bridge, prompt, aspect, project_id):
                 "token": "",
             },
         },
-        "requests": [{
-            "aspectRatio": aspect,
-            "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
-            "videoModelKey": MODEL_KEY,
-            "seed": random.randint(1, 9999),
-            "metadata": {},
-        }],
+        "requests": requests,
         "useV2ModelConfig": True,
     }
 
-    log.info('🎬 Generating: "%s" [%s]', prompt[:60], MODEL_KEY)
-    result = await bridge.api_request(GENERATE_ENDPOINT, body)
+    log.info('🎬 Generating: "%s" [%s] %ds x%d', prompt[:50], model_key, duration, count)
+    result = await bridge.api_request(ENDPOINTS["generate_t2v"], body)
 
     status = result.get("status", 0)
     if status != 200:
@@ -287,10 +299,12 @@ async def generate_video(bridge, prompt, aspect, project_id):
         log.error("❌ No media in response")
         return None
 
-    media_id = media[0].get("name")
+    media_ids = [m.get("name") for m in media]
     credits = data.get("remainingCredits", "?")
-    log.info("✅ Submitted! media_id=%s, credits=%s", media_id, credits)
-    return media_id
+    log.info("✅ Submitted! %d video(s), credits=%s", len(media_ids), credits)
+    for mid in media_ids:
+        log.info("   media_id=%s", mid)
+    return media_ids
 
 
 async def poll_status(bridge, media_id, project_id):
@@ -299,7 +313,7 @@ async def poll_status(bridge, media_id, project_id):
     start = time.time()
 
     while time.time() - start < POLL_TIMEOUT:
-        result = await bridge.api_request(POLL_ENDPOINT, body, captcha_action="")
+        result = await bridge.api_request(ENDPOINTS["poll_status"], body, captcha_action="")
         data = result.get("data", {})
         media = data.get("media", [])
 
@@ -325,7 +339,7 @@ async def poll_status(bridge, media_id, project_id):
 
 async def download_video(bridge, media_id, output_path):
     """Download video via get_media API."""
-    url_path = MEDIA_ENDPOINT.format(media_id=media_id)
+    url_path = ENDPOINTS["get_media"].format(media_id=media_id)
     result = await bridge.api_request(url_path, {}, captcha_action="", method="GET")
     data = result.get("data", result)
 
@@ -353,7 +367,7 @@ async def download_video(bridge, media_id, output_path):
 # ─── Main ────────────────────────────────────────────────────
 
 async def run(args):
-    aspect = "VIDEO_ASPECT_RATIO_LANDSCAPE" if args.aspect == "landscape" else "VIDEO_ASPECT_RATIO_PORTRAIT"
+    aspect = ASPECTS.get(args.aspect, "VIDEO_ASPECT_RATIO_PORTRAIT")
 
     bridge = ExtensionBridge()
     await bridge.start()
@@ -361,17 +375,29 @@ async def run(args):
     if not await bridge.wait_for_extension(timeout=30):
         return
 
-    media_id = await generate_video(bridge, args.prompt, aspect, args.project_id)
-    if not media_id:
+    media_ids = await generate_video(bridge, args.prompt, aspect, args.project_id,
+                                     duration=args.duration, count=args.count)
+    if not media_ids:
         return
 
-    if not await poll_status(bridge, media_id, args.project_id):
-        return
+    # Poll all videos
+    for i, media_id in enumerate(media_ids):
+        label = f"[{i+1}/{len(media_ids)}] " if len(media_ids) > 1 else ""
+        log.info("%sPolling %s...", label, media_id[:12])
+        if not await poll_status(bridge, media_id, args.project_id):
+            continue
 
-    if await download_video(bridge, media_id, args.output):
-        log.info("🎉 Done! %s", args.output)
-        if sys.platform == "darwin":
-            os.system(f'open "{args.output}"')
+        # Build output filename
+        if len(media_ids) == 1:
+            out_path = args.output
+        else:
+            base, ext = os.path.splitext(args.output)
+            out_path = f"{base}_{i+1}{ext}"
+
+        if await download_video(bridge, media_id, out_path):
+            log.info("🎉 Done! %s", out_path)
+            if sys.platform == "darwin":
+                os.system(f'open "{out_path}"')
 
     await bridge.close()
 
@@ -381,6 +407,10 @@ def main():
     parser.add_argument("prompt", help="Text prompt for video")
     parser.add_argument("--output", "-o", default="omni_output.mp4", help="Output file")
     parser.add_argument("--aspect", "-a", choices=["portrait", "landscape"], default="portrait")
+    parser.add_argument("--duration", "-d", type=int, choices=[4, 6, 8, 10], default=10,
+                        help="Video duration in seconds (default: 10)")
+    parser.add_argument("--count", "-c", type=int, choices=[1, 2, 3, 4], default=1,
+                        help="Number of videos to generate (default: 1)")
     parser.add_argument("--project-id", "-p", default=DEFAULT_PROJECT)
     args = parser.parse_args()
 
