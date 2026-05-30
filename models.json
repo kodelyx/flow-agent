@@ -1,4 +1,13 @@
 {
+  "api_key": "AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY",
+  "api_base": "https://aisandbox-pa.googleapis.com",
+  "default_project": "0143adf4-5864-4cb4-abb5-fe4254ad0dc7",
+  "client_context": {
+    "tool": "PINHOLE",
+    "tier": "PAYGATE_TIER_ONE",
+    "origin": "https://labs.google",
+    "recaptcha_app_type": "RECAPTCHA_APPLICATION_TYPE_WEB"
+  },
   "models": {
     "omni_flash": {
       "t2v": {

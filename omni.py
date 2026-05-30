@@ -35,13 +35,16 @@ import websockets
 
 WS_PORT = int(os.environ.get("WS_PORT", "9222"))
 HTTP_PORT = int(os.environ.get("HTTP_PORT", "8100"))
-API_KEY = "AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY"
 
 # ─── Load models config ─────────────────────────────────────
 _MODELS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models.json")
 with open(_MODELS_FILE) as _f:
     MODELS = json.load(_f)
 
+API_KEY = MODELS["api_key"]
+API_BASE = MODELS["api_base"]
+DEFAULT_PROJECT = MODELS["default_project"]
+CLIENT_CTX = MODELS["client_context"]
 ASPECTS = MODELS["aspects"]
 ENDPOINTS = MODELS["endpoints"]
 DURATIONS = MODELS["durations"]
@@ -49,7 +52,6 @@ DEFAULT_DURATION = max(DURATIONS)
 
 POLL_INTERVAL = 10
 POLL_TIMEOUT = 420
-DEFAULT_PROJECT = "0143adf4-5864-4cb4-abb5-fe4254ad0dc7"
 
 USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
@@ -162,7 +164,7 @@ class ExtensionBridge:
         future = self._loop.create_future()
         self._pending[req_id] = future
 
-        url = f"https://aisandbox-pa.googleapis.com{url_path}?key={API_KEY}"
+        url = f"{API_BASE}{url_path}?key={API_KEY}"
         ua = random.choice(USER_AGENTS)
         platform = '"macOS"' if "Macintosh" in ua else '"Windows"'
 
@@ -175,8 +177,8 @@ class ExtensionBridge:
                 "headers": {
                     "accept": "*/*",
                     "content-type": "text/plain;charset=UTF-8",
-                    "origin": "https://labs.google",
-                    "referer": "https://labs.google/",
+                    "origin": CLIENT_CTX["origin"],
+                    "referer": CLIENT_CTX["origin"] + "/",
                     "sec-ch-ua-mobile": "?0",
                     "sec-ch-ua-platform": platform,
                     "sec-fetch-dest": "empty",
@@ -270,11 +272,11 @@ async def generate_video(bridge, prompt, aspect, project_id, duration=10, count=
         "mediaGenerationContext": {"batchId": str(uuid.uuid4())},
         "clientContext": {
             "projectId": project_id,
-            "tool": "PINHOLE",
-            "userPaygateTier": "PAYGATE_TIER_ONE",
+            "tool": CLIENT_CTX["tool"],
+            "userPaygateTier": CLIENT_CTX["tier"],
             "sessionId": f";{int(time.time() * 1000)}",
             "recaptchaContext": {
-                "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB",
+                "applicationType": CLIENT_CTX["recaptcha_app_type"],
                 "token": "",
             },
         },
