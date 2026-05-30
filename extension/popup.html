@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Flow Kit</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0d0d1a;
+      --surface:  #13132a;
+      --card:     #1a1a35;
+      --border:   #252545;
+      --accent:   #3b82f6;
+      --accent-dim: #1d4ed8;
+      --green:    #22c55e;
+      --red:      #ef4444;
+      --yellow:   #f59e0b;
+      --text:     #e2e8f0;
+      --muted:    #64748b;
+      --font:     'DM Mono', 'Fira Code', 'Cascadia Code', monospace;
+    }
+
+    html, body {
+      width: 360px;
+      min-height: 200px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px 8px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .header-title {
+      flex: 1;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      color: var(--text);
+    }
+
+    .header-title span { color: var(--accent); }
+
+    #btn-panel {
+      padding: 4px 10px;
+      font-family: var(--font);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--accent-dim);
+      color: #fff;
+      cursor: pointer;
+    }
+
+    #btn-panel:hover { background: var(--accent); }
+
+    .log-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 12px 5px;
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    #log-count {
+      background: var(--border);
+      border-radius: 10px;
+      padding: 1px 6px;
+      font-size: 9px;
+      color: var(--muted);
+    }
+
+    #log-list {
+      max-height: 440px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    #log-list::-webkit-scrollbar { width: 4px; }
+    #log-list::-webkit-scrollbar-track { background: transparent; }
+    #log-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .log-empty {
+      padding: 20px 12px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 10px;
+      letter-spacing: 0.04em;
+    }
+
+    .entry {
+      border-bottom: 1px solid rgba(37,37,69,0.6);
+    }
+
+    .entry-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      cursor: pointer;
+      transition: background 0.1s;
+      user-select: none;
+    }
+
+    .entry-row:hover { background: rgba(59,130,246,0.05); }
+
+    .entry-id {
+      font-size: 9px;
+      color: var(--muted);
+      min-width: 54px;
+      flex-shrink: 0;
+    }
+
+    .entry-type {
+      flex: 1;
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: 0.04em;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .entry-time {
+      font-size: 9px;
+      color: var(--muted);
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 9px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .badge-ok   { background: rgba(34,197,94,0.12);  color: var(--green); }
+    .badge-fail { background: rgba(239,68,68,0.12);  color: var(--red); }
+    .badge-proc { background: rgba(245,158,11,0.12); color: var(--yellow); }
+
+    .expand-icon {
+      font-size: 9px;
+      color: var(--muted);
+      flex-shrink: 0;
+      transition: transform 0.15s;
+    }
+
+    .entry.open .expand-icon { transform: rotate(90deg); }
+
+    .entry-details {
+      display: none;
+      padding: 0 12px 8px;
+      background: var(--surface);
+    }
+
+    .entry.open .entry-details { display: block; }
+
+    .detail-section {
+      margin-top: 6px;
+    }
+
+    .detail-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 2px;
+    }
+
+    .detail-value {
+      font-size: 9px;
+      color: var(--text);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 4px 6px;
+      word-break: break-all;
+      white-space: pre-wrap;
+      max-height: 80px;
+      overflow-y: auto;
+    }
+
+    .detail-value.url {
+      color: var(--accent);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-height: none;
+    }
+
+    .detail-error {
+      color: var(--red);
+    }
+
+    .footer {
+      padding: 8px 12px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      font-size: 9px;
+      color: var(--muted);
+      text-align: center;
+      letter-spacing: 0.04em;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-title"><span>Flow Kit</span> Extension</div>
+    <button id="btn-panel">Side Panel</button>
+  </header>
+
+  <div class="log-header">
+    Recent Requests
+    <span id="log-count">0</span>
+  </div>
+
+  <div id="log-list">
+    <div class="log-empty">No requests yet</div>
+  </div>
+
+  <div class="footer">Click a row to expand details</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

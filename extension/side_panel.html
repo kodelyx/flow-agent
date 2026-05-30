@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Flow Kit</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0d0d1a;
+      --surface:  #13132a;
+      --card:     #1a1a35;
+      --border:   #252545;
+      --accent:   #3b82f6;
+      --accent-dim: #1d4ed8;
+      --green:    #22c55e;
+      --red:      #ef4444;
+      --yellow:   #f59e0b;
+      --text:     #e2e8f0;
+      --muted:    #64748b;
+      --font:     'DM Mono', 'Fira Code', 'Cascadia Code', monospace;
+    }
+
+    html, body {
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      width: 100%;
+      min-width: 280px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 12px;
+      line-height: 1.5;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ─────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 14px 10px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .header-title {
+      flex: 1;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      color: var(--text);
+    }
+
+    .header-title span {
+      color: var(--accent);
+    }
+
+    /* Connection dot */
+    #conn-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--red);
+      box-shadow: 0 0 0 0 var(--red);
+      transition: background 0.3s, box-shadow 0.3s;
+      flex-shrink: 0;
+    }
+
+    #conn-dot.on {
+      background: var(--green);
+      box-shadow: 0 0 6px 1px rgba(34, 197, 94, 0.5);
+      animation: pulse-dot 2.4s ease-in-out infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { box-shadow: 0 0 4px 1px rgba(34, 197, 94, 0.4); }
+      50%       { box-shadow: 0 0 10px 3px rgba(34, 197, 94, 0.2); }
+    }
+
+    /* ON/OFF toggle */
+    .toggle-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .toggle-label {
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .toggle {
+      position: relative;
+      width: 32px;
+      height: 18px;
+      cursor: pointer;
+    }
+
+    .toggle input { opacity: 0; width: 0; height: 0; }
+
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      background: var(--border);
+      border-radius: 9px;
+      transition: background 0.25s;
+    }
+
+    .toggle-thumb {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: transform 0.25s, background 0.25s;
+    }
+
+    .toggle input:checked ~ .toggle-track { background: var(--accent-dim); }
+    .toggle input:checked ~ .toggle-thumb {
+      transform: translateX(14px);
+      background: var(--accent);
+    }
+
+    /* ── Metrics grid ───────────────────────────────── */
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .metric-card {
+      background: var(--card);
+      padding: 10px 8px 8px;
+      text-align: center;
+    }
+
+    .metric-value {
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+
+    .metric-value.green { color: var(--green); }
+    .metric-value.red   { color: var(--red); }
+
+    .metric-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+    }
+
+    /* ── State bar ──────────────────────────────────── */
+    .state-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+    }
+
+    #state-badge {
+      padding: 1px 7px;
+      border-radius: 3px;
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      background: var(--border);
+      color: var(--muted);
+    }
+
+    #state-badge.idle    { background: rgba(34,197,94,0.15);  color: var(--green); }
+    #state-badge.running { background: rgba(245,158,11,0.15); color: var(--yellow); }
+    #state-badge.off     { background: var(--border);         color: var(--muted); }
+
+    #token-status {
+      margin-left: auto;
+      font-size: 10px;
+    }
+
+    #token-status.ok   { color: var(--green); }
+    #token-status.bad  { color: var(--red); }
+    #token-status.warn { color: var(--yellow); }
+
+    /* ── Log section ────────────────────────────────── */
+    .log-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 14px 6px;
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    #log-count {
+      background: var(--border);
+      border-radius: 10px;
+      padding: 1px 6px;
+      font-size: 9px;
+      color: var(--muted);
+    }
+
+    .log-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .log-table-wrap {
+      flex: 1;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .log-table-wrap::-webkit-scrollbar { width: 4px; }
+    .log-table-wrap::-webkit-scrollbar-track { background: transparent; }
+    .log-table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      padding: 5px 10px 5px;
+      text-align: left;
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      z-index: 1;
+    }
+
+    thead th:first-child { width: 60px; }
+    thead th:last-child { width: 36%; }
+
+    tbody tr {
+      border-bottom: 1px solid rgba(37, 37, 69, 0.6);
+      transition: background 0.12s;
+    }
+
+    tbody tr:hover { background: rgba(59, 130, 246, 0.05); }
+
+    tbody td {
+      padding: 5px 10px;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+
+    .td-id {
+      font-size: 9px;
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.03em;
+      cursor: pointer;
+      text-decoration: underline;
+      text-decoration-color: transparent;
+      transition: text-decoration-color 0.15s;
+    }
+
+    .td-id:hover {
+      text-decoration-color: var(--accent);
+    }
+
+    /* ── Detail modal ──────────────────────────────── */
+    .detail-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 100;
+    }
+
+    .detail-overlay.open { display: flex; align-items: center; justify-content: center; }
+
+    .detail-panel {
+      width: 92%;
+      max-height: 80vh;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .detail-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    .detail-close {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 16px;
+      line-height: 1;
+    }
+
+    .detail-close:hover { color: var(--text); }
+
+    .detail-body {
+      padding: 12px 14px;
+      overflow-y: auto;
+      font-size: 10px;
+      line-height: 1.6;
+      max-height: 65vh;
+    }
+
+    .detail-row {
+      display: flex;
+      gap: 8px;
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(37,37,69,0.4);
+    }
+
+    .detail-label {
+      width: 90px;
+      flex-shrink: 0;
+      color: var(--muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 9px;
+      letter-spacing: 0.06em;
+    }
+
+    .detail-value {
+      flex: 1;
+      word-break: break-all;
+      color: var(--text);
+    }
+
+    .detail-value.error { color: var(--red); }
+    .detail-value.ok { color: var(--green); }
+
+    .td-type {
+      font-family: var(--font);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      color: var(--accent);
+    }
+
+    .td-time {
+      font-size: 10px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Status badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .badge-ok   { background: rgba(34,197,94,0.12);  color: var(--green); }
+    .badge-fail { background: rgba(239,68,68,0.12);  color: var(--red); }
+    .badge-proc { background: rgba(245,158,11,0.12); color: var(--yellow); }
+
+    .td-error {
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 10px;
+      color: var(--red);
+      cursor: default;
+    }
+
+    .td-error.empty { color: var(--muted); }
+
+    .log-empty {
+      padding: 24px 14px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+    }
+
+    /* ── Action buttons ─────────────────────────────── */
+    .actions {
+      display: flex;
+      gap: 8px;
+      padding: 10px 14px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .btn {
+      flex: 1;
+      padding: 7px 10px;
+      font-family: var(--font);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: var(--card);
+      color: var(--text);
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+
+    .btn:hover {
+      background: var(--border);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .btn:active { opacity: 0.7; }
+
+    .btn-primary {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    /* ── Signature ──────────────────────────────────── */
+    .signature {
+      padding: 8px 14px;
+      text-align: center;
+      font-size: 9px;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+    }
+
+    .signature a {
+      color: var(--accent);
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+
+    .signature a:hover {
+      color: var(--text);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div id="conn-dot"></div>
+    <div class="header-title"><span>Flow Kit</span> Extension</div>
+    <div class="toggle-wrap">
+      <span class="toggle-label" id="toggle-label">OFF</span>
+      <label class="toggle">
+        <input type="checkbox" id="main-toggle">
+        <span class="toggle-track"></span>
+        <span class="toggle-thumb"></span>
+      </label>
+    </div>
+  </header>
+
+  <!-- Metrics -->
+  <div class="metrics">
+    <div class="metric-card">
+      <div class="metric-value" id="m-total">0</div>
+      <div class="metric-label">Total</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-value green" id="m-success">0</div>
+      <div class="metric-label">Success</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-value red" id="m-failed">0</div>
+      <div class="metric-label">Failed</div>
+    </div>
+  </div>
+
+  <!-- State bar -->
+  <div class="state-bar">
+    STATE
+    <span id="state-badge" class="off">off</span>
+    <span id="token-status" class="bad">no token</span>
+  </div>
+
+  <!-- Request log -->
+  <div class="log-section">
+    <div class="log-header">
+      Request Log
+      <span id="log-count">0</span>
+    </div>
+
+    <div class="log-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Type</th>
+            <th>Time</th>
+            <th>Status</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody id="log-body">
+          <tr>
+            <td colspan="5" class="log-empty">No requests yet</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Actions -->
+  <div class="actions">
+    <button class="btn btn-primary" id="btn-flow">Open Flow Tab</button>
+    <button class="btn" id="btn-token">Refresh Token</button>
+  </div>
+
+  <!-- Signature -->
+  <div class="signature">
+    <a href="https://github.com/crisng95/flowkit" target="_blank">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:3px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>flowkit</a> &middot; built by <a href="https://veogent.com" target="_blank">veogent.com</a>
+  </div>
+
+  <!-- Detail overlay -->
+  <div class="detail-overlay" id="detail-overlay">
+    <div class="detail-panel">
+      <div class="detail-header">
+        <span id="detail-title">Request Detail</span>
+        <button class="detail-close" id="detail-close">&times;</button>
+      </div>
+      <div class="detail-body" id="detail-body"></div>
+    </div>
+  </div>
+
+  <script src="side_panel.js"></script>
+</body>
+</html>
