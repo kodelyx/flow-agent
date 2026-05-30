@@ -198,6 +198,8 @@ function connectToAgent() {
         await handleApiRequest(msg);
       } else if (msg.method === 'trpc_request') {
         await handleTrpcRequest(msg);
+      } else if (msg.method === 'upload_video') {
+        await handleUploadVideo(msg);
       } else if (msg.method === 'solve_captcha') {
         await handleSolveCaptcha(msg);
       } else if (msg.method === 'get_status') {
@@ -391,6 +393,66 @@ async function handleTrpcRequest(msg) {
     sendToAgent({ id, error: e.message || 'TRPC_FETCH_FAILED' });
   } finally {
     setState('idle');
+  }
+}
+
+
+async function handleUploadVideo(msg) {
+  const { id, params } = msg;
+  const { videoBase64, projectId, videoSize } = params;
+
+  try {
+    const tabs = await chrome.tabs.query({ url: '*://labs.google/*' });
+    if (!tabs.length) {
+      sendToAgent({ id, error: 'NO_FLOW_TAB' });
+      return;
+    }
+
+    const size = videoSize || (videoBase64 ? Math.floor(videoBase64.length * 3 / 4) : 0);
+
+    // Get session URL via page context XHR (needs session cookies)
+    const startResults = await chrome.scripting.executeScript({
+      target: { tabId: tabs[0].id },
+      world: 'MAIN',
+      func: (projId, sz) => {
+        return new Promise((resolve) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', '/fx/api/upload-video?action=start');
+          xhr.setRequestHeader('X-Upload-Project-Id', projId);
+          xhr.setRequestHeader('X-Upload-Content-Type', 'video/mp4');
+          xhr.setRequestHeader('X-Upload-Content-Length', sz.toString());
+          xhr.withCredentials = true;
+          xhr.onload = () => {
+            let data;
+            try { data = JSON.parse(xhr.responseText); } catch { data = {}; }
+            resolve({
+              sessionUrl: data.sessionUrl || xhr.getResponseHeader('X-Upload-Session-Url') || '',
+              status: xhr.status,
+            });
+          };
+          xhr.onerror = () => resolve({ error: 'POST_FAILED' });
+          xhr.send();
+        });
+      },
+      args: [projectId, size],
+    });
+
+    const step1 = startResults?.[0]?.result;
+    if (!step1 || step1.error || !step1.sessionUrl) {
+      sendToAgent({ id, error: step1?.error || 'NO_SESSION_URL' });
+      return;
+    }
+
+    // Return sessionUrl + token — caller handles PUT
+    sendToAgent({
+      id,
+      result: {
+        sessionUrl: step1.sessionUrl,
+        token: flowKey || '',
+      },
+    });
+  } catch (e) {
+    sendToAgent({ id, error: `UPLOAD_ERROR: ${e.message}` });
   }
 }
 

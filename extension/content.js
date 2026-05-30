@@ -61,3 +61,31 @@ window.addEventListener('message', (e) => {
     timestamp: Date.now(),
   }).catch(() => {});
 });
+
+// ─── Video Upload Relay ─────────────────────────────────────
+chrome.runtime.onMessage.addListener((msg, _, reply) => {
+  if (msg.type !== 'UPLOAD_VIDEO') return;
+
+  const { requestId, videoBase64, projectId } = msg;
+
+  const handler = (e) => {
+    if (e.detail?.requestId === requestId) {
+      window.removeEventListener('UPLOAD_VIDEO_RESULT', handler);
+      clearTimeout(timer);
+      reply(e.detail);
+    }
+  };
+
+  const timer = setTimeout(() => {
+    window.removeEventListener('UPLOAD_VIDEO_RESULT', handler);
+    reply({ error: 'UPLOAD_TIMEOUT' });
+  }, 120000); // 2 min timeout for large uploads
+
+  window.addEventListener('UPLOAD_VIDEO_RESULT', handler);
+
+  window.dispatchEvent(new CustomEvent('UPLOAD_VIDEO', {
+    detail: { requestId, videoBase64, projectId },
+  }));
+
+  return true; // keep channel open for async reply
+});

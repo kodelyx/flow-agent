@@ -7,3 +7,7 @@ __pycache__/
 venv/
 .DS_Store
 sniffed.json
+sniffed_all.json
+media_ids.json
+output/
+chunks/
