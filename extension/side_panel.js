@@ -1,5 +1,5 @@
 /**
- * Omni Flash Agent — Side Panel
+ * Flow Agent — Side Panel
  * Displays live connection status, metrics, and request log.
  */
 

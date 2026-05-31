@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Omni Flash Agent",
+  "name": "Flow Agent",
   "version": "1.0.0",
-  "description": "AI Video Generation Agent — automate Google Flow for T2V, V2V & I2V video creation",
+  "description": "Automate Google Flow's Omni Flash model — T2V, V2V & I2V video generation from your terminal",
   "icons": {
     "16": "icon16.png",
     "48": "icon48.png",
@@ -49,7 +49,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Omni Flash Agent",
+    "default_title": "Flow Agent",
     "default_icon": {
       "16": "icon16.png",
       "48": "icon48.png",

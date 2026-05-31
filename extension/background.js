@@ -1,5 +1,5 @@
 /**
- * Omni Flash Agent — Chrome Extension Background Service Worker
+ * Flow Agent — Chrome Extension Background Service Worker
  *
  * Connects to local Python agent via WebSocket (agent runs WS server).
  * Captures bearer token, solves reCAPTCHA, proxies API calls through browser.
@@ -99,7 +99,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     flowKey = token;
     metrics.tokenCapturedAt = Date.now();
     chrome.storage.local.set({ flowKey, metrics });
-    console.log('[Omni Flash Agent] Bearer token captured');
+    console.log('[Flow Agent] Bearer token captured');
 
     // Notify agent
     if (ws?.readyState === WebSocket.OPEN) {
@@ -118,28 +118,28 @@ async function captureTokenFromFlowTab() {
   });
   if (!tabs.length) {
     if (_openingFlowTab) {
-      console.log('[Omni Flash Agent] Flow tab already opening, skipping');
+      console.log('[Flow Agent] Flow tab already opening, skipping');
       return;
     }
     _openingFlowTab = true;
     try {
-      console.log('[Omni Flash Agent] No Flow tab found — opening one in background');
+      console.log('[Flow Agent] No Flow tab found — opening one in background');
       await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow', active: false });
       await sleep(3000);
       const retryTabs = await chrome.tabs.query({
         url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
       });
       if (!retryTabs.length) {
-        console.log('[Omni Flash Agent] Flow tab not ready yet after open');
+        console.log('[Flow Agent] Flow tab not ready yet after open');
         return;
       }
       await chrome.scripting.executeScript({
         target: { tabId: retryTabs[0].id },
         files: ['content.js'],
       });
-      console.log('[Omni Flash Agent] Token refresh triggered on newly opened Flow tab');
+      console.log('[Flow Agent] Token refresh triggered on newly opened Flow tab');
     } catch (e) {
-      console.error('[Omni Flash Agent] Token refresh failed after opening tab:', e);
+      console.error('[Flow Agent] Token refresh failed after opening tab:', e);
     } finally {
       _openingFlowTab = false;
     }
@@ -150,9 +150,9 @@ async function captureTokenFromFlowTab() {
       target: { tabId: tabs[0].id },
       files: ['content.js'],
     });
-    console.log('[Omni Flash Agent] Token refresh triggered on Flow tab');
+    console.log('[Flow Agent] Token refresh triggered on Flow tab');
   } catch (e) {
-    console.error('[Omni Flash Agent] Token refresh failed:', e);
+    console.error('[Flow Agent] Token refresh failed:', e);
   }
 }
 
@@ -166,13 +166,13 @@ function connectToAgent() {
   try {
     ws = new WebSocket(AGENT_WS_URL);
   } catch (e) {
-    console.error('[Omni Flash Agent] WS connect error:', e);
+    console.error('[Flow Agent] WS connect error:', e);
     scheduleReconnect();
     return;
   }
 
   ws.onopen = () => {
-    console.log('[Omni Flash Agent] Connected to agent');
+    console.log('[Flow Agent] Connected to agent');
     chrome.alarms.clear('reconnect');
     setState('idle');
 
@@ -216,12 +216,12 @@ function connectToAgent() {
       } else if (msg.type === 'callback_secret') {
         callbackSecret = msg.secret;
         chrome.storage.local.set({ callbackSecret: msg.secret });
-        console.log('[Omni Flash Agent] Received callback secret');
+        console.log('[Flow Agent] Received callback secret');
       } else if (msg.type === 'pong') {
         // keepalive response
       }
     } catch (e) {
-      console.error('[Omni Flash Agent] Message error:', e);
+      console.error('[Flow Agent] Message error:', e);
     }
   };
 
@@ -232,7 +232,7 @@ function connectToAgent() {
   };
 
   ws.onerror = (e) => {
-    console.error('[Omni Flash Agent] WS error:', e);
+    console.error('[Flow Agent] WS error:', e);
     metrics.lastError = 'WS_ERROR';
     chrome.storage.local.set({ metrics });
   };
@@ -387,7 +387,7 @@ async function handleTrpcRequest(msg) {
     updateRequestLog(logId, { status: 'success' });
     sendToAgent({ id, status: resp.status, data });
   } catch (e) {
-    console.error('[Omni Flash Agent] tRPC request failed:', e);
+    console.error('[Flow Agent] tRPC request failed:', e);
     chrome.storage.local.set({ metrics });
     updateRequestLog(logId, { status: 'failed', error: e.message || 'TRPC_FETCH_FAILED' });
     sendToAgent({ id, error: e.message || 'TRPC_FETCH_FAILED' });
@@ -490,7 +490,7 @@ async function handleApiRequest(msg) {
       if (!captchaToken) {
         // Cannot proceed without captcha — API will 403
         const err = captchaResult?.error || 'CAPTCHA_FAILED';
-        console.error(`[Omni Flash Agent] Captcha failed for ${captchaAction}: ${err}`);
+        console.error(`[Flow Agent] Captcha failed for ${captchaAction}: ${err}`);
         sendToAgent({ id, status: 403, error: `CAPTCHA_FAILED: ${err}` });
         if (hasCaptcha) { metrics.failedCount++; metrics.lastError = `CAPTCHA_FAILED: ${err}`; }
         chrome.storage.local.set({ metrics });
@@ -663,7 +663,7 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
   }
 
   if (msg.type === 'SNIFFED_AISANDBOX_REQUEST') {
-    console.log('[Omni Flash Agent] SNIFFED aisandbox request:', msg.url);
+    console.log('[Flow Agent] SNIFFED aisandbox request:', msg.url);
     fetch('http://127.0.0.1:8100/api/ext/callback', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -674,7 +674,7 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
         payload: msg.payload,
         timestamp: msg.timestamp,
       }),
-    }).catch((e) => console.error('[Omni Flash Agent] Failed to forward sniffed request:', e));
+    }).catch((e) => console.error('[Flow Agent] Failed to forward sniffed request:', e));
     reply({ ok: true });
     return true;
   }
@@ -707,7 +707,7 @@ function handleTrpcMediaUrls(trpcUrl, bodyText) {
     const entries = Object.values(urlMap);
     if (!entries.length) return;
 
-    console.log(`[Omni Flash Agent] Captured ${entries.length} fresh media URLs from TRPC`);
+    console.log(`[Flow Agent] Captured ${entries.length} fresh media URLs from TRPC`);
     // URL refresh is silent — don't show in request log
 
     // Forward to agent for DB update
@@ -718,7 +718,7 @@ function handleTrpcMediaUrls(trpcUrl, bodyText) {
       }));
     }
   } catch (e) {
-    console.error('[Omni Flash Agent] Failed to extract TRPC media URLs:', e);
+    console.error('[Flow Agent] Failed to extract TRPC media URLs:', e);
   }
 }
 
@@ -825,4 +825,4 @@ setInterval(() => { _telemetrySessionId = `;${Date.now()}`; }, _rand(25, 35) * 6
 
 scheduleTelemetry();
 
-console.log('[Omni Flash Agent] Extension loaded');
+console.log('[Flow Agent] Extension loaded');
