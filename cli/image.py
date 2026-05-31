@@ -66,8 +66,6 @@ async def run(args):
 
         if await download_image(bridge, r["image_url"], out_path):
             print(f"🎉 Done! {out_path}")
-            if sys.platform == "darwin":
-                os.system(f'open "{out_path}"')
 
     await bridge.close()
 

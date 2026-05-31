@@ -221,8 +221,6 @@ async def run(args):
             except Exception:
                 pass
             log.info("✅ Merged: %s", merge_path)
-            if sys.platform == "darwin":
-                os.system(f'open "{merge_path}"')
         except Exception as e:
             log.warning("⚠️ Merge failed (ffmpeg needed): %s", e)
 
