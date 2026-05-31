@@ -11,3 +11,5 @@ sniffed_all.json
 media_ids.json
 output/
 chunks/
+*.mp4
+__pycache__/

@@ -1,35 +1,28 @@
 #!/usr/bin/env python3
-"""
-Omni Flash — Full Video Editor
-Edits an entire video by splitting into 10s segments,
-processing each through V2V (abra_edit), and saving results.
+"""CLI — Full video editor (V2V with segmentation + merge).
 
 Usage:
-    python edit_full.py "Make it anime style" --media-id <ID> --video-file input.mp4 -o output/
-    python edit_full.py "Cyberpunk neon look" --media-id <ID> --total-seconds 45 -o output/
+    python -m cli.edit "Make it anime style" -m MEDIA_ID -v video.mp4
+    python -m cli.edit "Cyberpunk neon" -m MEDIA_ID --total-seconds 45 -o output/
 """
 
 import argparse
 import asyncio
-import json
 import logging
 import os
 import subprocess
 import sys
-import time
 
-# Import everything from omni.py
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from omni import (
-    ExtensionBridge, edit_video, poll_status, download_video,
-    ASPECTS, DEFAULT_PROJECT
-)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
-log = logging.getLogger("edit_full")
+from omniflash import ExtensionBridge, poll_status, download_video, ASPECTS, DEFAULT_PROJECT
+from omniflash.generators.v2v import edit_video
+from omniflash.generators.common import build_client_context, build_generation_context
+from omniflash.config import ENDPOINTS, CLIENT_CTX, FPS, SEGMENT_DURATION
 
-SEGMENT_DURATION = 10  # seconds per segment
-FPS = 24               # frames per second
+import random
+
+log = logging.getLogger("cli.edit")
 
 
 def get_video_duration(video_path):
@@ -42,11 +35,8 @@ def get_video_duration(video_path):
         )
         return float(r.stdout.strip())
     except Exception:
-        log.warning("ffprobe not found or failed, trying python...")
-        # Fallback: rough estimate from file size
         try:
             size = os.path.getsize(video_path)
-            # Rough: 1MB per 3 seconds for typical video
             return max(10, size / (1024 * 1024) * 3)
         except Exception:
             return None
@@ -73,25 +63,9 @@ def get_video_fps(video_path):
 async def edit_segment(bridge, prompt, aspect, project_id, media_id,
                        start_frame, end_frame, segment_num, output_dir):
     """Edit a single segment and download."""
-    import uuid
-    import random
-    from omni import ENDPOINTS, CLIENT_CTX, API_KEY, API_BASE
-
     body = {
-        "mediaGenerationContext": {
-            "batchId": str(uuid.uuid4()),
-            "audioFailurePreference": "BLOCK_SILENCED_VIDEOS",
-        },
-        "clientContext": {
-            "projectId": project_id,
-            "tool": CLIENT_CTX["tool"],
-            "userPaygateTier": CLIENT_CTX["tier"],
-            "sessionId": f";{int(time.time() * 1000)}",
-            "recaptchaContext": {
-                "applicationType": CLIENT_CTX["recaptcha_app_type"],
-                "token": "",
-            },
-        },
+        "mediaGenerationContext": build_generation_context("BLOCK_SILENCED_VIDEOS"),
+        "clientContext": build_client_context(project_id),
         "requests": [{
             "aspectRatio": aspect,
             "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
@@ -132,11 +106,9 @@ async def edit_segment(bridge, prompt, aspect, project_id, media_id,
     log.info("✅ Segment %d submitted! media_id=%s, credits=%s",
              segment_num, result_media_id[:12], credits)
 
-    # Poll
     if not await poll_status(bridge, result_media_id, project_id):
         return None
 
-    # Download
     out_path = os.path.join(output_dir, f"segment_{segment_num:03d}.mp4")
     if await download_video(bridge, result_media_id, out_path):
         return out_path
@@ -146,7 +118,6 @@ async def edit_segment(bridge, prompt, aspect, project_id, media_id,
 async def run(args):
     aspect = ASPECTS.get(args.aspect, "VIDEO_ASPECT_RATIO_PORTRAIT")
 
-    # Get total duration
     total_seconds = args.total_seconds
     fps = FPS
 
@@ -161,7 +132,6 @@ async def run(args):
         log.error("❌ Can't determine video duration. Use --total-seconds")
         return
 
-    # Create output dir
     os.makedirs(args.output, exist_ok=True)
 
     # Calculate segments
@@ -177,18 +147,16 @@ async def run(args):
         current += SEGMENT_DURATION
         seg_num += 1
 
-    log.info("📋 Total: %.1fs → %d segments of %ds each", total_seconds, len(segments), SEGMENT_DURATION)
-    log.info("🚀 Parallel: %d concurrent", min(5, len(segments)))
+    log.info("📋 Total: %.1fs → %d segments of %ds each",
+             total_seconds, len(segments), SEGMENT_DURATION)
     log.info("─" * 50)
 
-    # Connect to extension
     bridge = ExtensionBridge()
     await bridge.start()
-
     if not await bridge.wait_for_extension(timeout=30):
         return
 
-    # Process segments in parallel (max 5 concurrent)
+    # Process segments (max 5 concurrent)
     semaphore = asyncio.Semaphore(5)
     results = [None] * len(segments)
 
@@ -200,26 +168,21 @@ async def run(args):
             )
             results[idx] = out
 
-    tasks = []
-    for idx, (seg_num, start_frame, end_frame) in enumerate(segments):
-        task = asyncio.create_task(
-            process_segment(idx, seg_num, start_frame, end_frame)
-        )
-        tasks.append(task)
-
+    tasks = [
+        asyncio.create_task(process_segment(idx, sn, sf, ef))
+        for idx, (sn, sf, ef) in enumerate(segments)
+    ]
     await asyncio.gather(*tasks)
     await bridge.close()
 
-    # Collect saved files (in order)
     saved = [r for r in results if r]
 
-    # Summary
     log.info("─" * 50)
     log.info("🎉 Done! %d/%d segments saved to %s/", len(saved), len(segments), args.output)
     for f in saved:
         log.info("   ✅ %s", os.path.basename(f))
 
-    # Try to merge with ffmpeg
+    # Merge with ffmpeg
     if len(saved) > 1 and args.merge:
         merge_path = os.path.join(args.output, "merged_output.mp4")
         log.info("🔗 Merging %d segments...", len(saved))
@@ -242,19 +205,15 @@ async def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Omni Flash — Full Video Editor")
-    parser.add_argument("prompt", help="Edit prompt (applied to all segments)")
-    parser.add_argument("--media-id", "-m", required=True,
-                        help="Flow media ID of uploaded video")
-    parser.add_argument("--video-file", "-v",
-                        help="Local video file (for auto-detecting duration/fps)")
-    parser.add_argument("--total-seconds", "-t", type=float,
-                        help="Total video duration in seconds (if no local file)")
+    parser.add_argument("prompt", help="Edit prompt")
+    parser.add_argument("--media-id", "-m", required=True, help="Flow media ID")
+    parser.add_argument("--video-file", "-v", help="Local video (for duration/fps)")
+    parser.add_argument("--total-seconds", "-t", type=float)
     parser.add_argument("--output", "-o", default="output", help="Output directory")
     parser.add_argument("--aspect", "-a", choices=["portrait", "landscape"], default="portrait")
-    parser.add_argument("--merge", action="store_true", help="Merge segments with ffmpeg")
+    parser.add_argument("--merge", action="store_true")
     parser.add_argument("--project-id", "-p", default=DEFAULT_PROJECT)
     args = parser.parse_args()
-
     asyncio.run(run(args))
 
 

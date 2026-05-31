@@ -2,23 +2,31 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Flow Kit</title>
+  <title>FlowAgent</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:       #0d0d1a;
-      --surface:  #13132a;
-      --card:     #1a1a35;
-      --border:   #252545;
-      --accent:   #3b82f6;
-      --accent-dim: #1d4ed8;
-      --green:    #22c55e;
-      --red:      #ef4444;
-      --yellow:   #f59e0b;
-      --text:     #e2e8f0;
-      --muted:    #64748b;
-      --font:     'DM Mono', 'Fira Code', 'Cascadia Code', monospace;
+      --bg:         #08090e;
+      --surface:    #0e1018;
+      --card:       #141622;
+      --card-hover: #1a1d2e;
+      --border:     #1e2235;
+      --border-glow:#2a3050;
+      --accent:     #6366f1;
+      --accent-soft:#818cf8;
+      --accent-bg:  rgba(99,102,241,0.08);
+      --green:      #10b981;
+      --red:        #f43f5e;
+      --yellow:     #f59e0b;
+      --cyan:       #22d3ee;
+      --text:       #e8eaf0;
+      --text-dim:   #9ca3af;
+      --muted:      #6b7280;
+      --font:       'Inter', -apple-system, sans-serif;
+      --mono:       'SF Mono', 'Fira Code', monospace;
+      --radius:     8px;
     }
 
     html, body {
@@ -27,51 +35,82 @@
       background: var(--bg);
       color: var(--text);
       font-family: var(--font);
-      font-size: 11px;
+      font-size: 12px;
       line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
     }
 
     header {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 10px 12px 8px;
+      gap: 10px;
+      padding: 12px 14px 10px;
       border-bottom: 1px solid var(--border);
-      background: var(--surface);
+      background: linear-gradient(180deg, rgba(99,102,241,0.06) 0%, var(--surface) 100%);
+      position: relative;
+    }
+
+    header::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 14px;
+      right: 14px;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(99,102,241,0.25), transparent);
+    }
+
+    .logo {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background: linear-gradient(135deg, var(--accent), #a855f7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 12px;
+      color: #fff;
+      box-shadow: 0 2px 6px rgba(99,102,241,0.3);
     }
 
     .header-title {
       flex: 1;
-      font-size: 12px;
-      font-weight: 600;
-      letter-spacing: 0.04em;
-      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #e0e7ff, #c7d2fe);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
     }
-
-    .header-title span { color: var(--accent); }
 
     #btn-panel {
-      padding: 4px 10px;
+      padding: 5px 12px;
       font-family: var(--font);
-      font-size: 9px;
+      font-size: 10px;
       font-weight: 600;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
+      letter-spacing: 0.02em;
       border: 1px solid var(--border);
-      border-radius: 4px;
-      background: var(--accent-dim);
+      border-radius: 6px;
+      background: linear-gradient(135deg, var(--accent), #7c3aed);
       color: #fff;
       cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 2px 6px rgba(99,102,241,0.2);
     }
 
-    #btn-panel:hover { background: var(--accent); }
+    #btn-panel:hover {
+      background: linear-gradient(135deg, #818cf8, #8b5cf6);
+      box-shadow: 0 3px 10px rgba(99,102,241,0.3);
+      transform: translateY(-1px);
+    }
 
     .log-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 6px 12px 5px;
+      padding: 8px 14px 6px;
       font-size: 9px;
+      font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.1em;
       color: var(--muted);
@@ -80,11 +119,13 @@
     }
 
     #log-count {
-      background: var(--border);
+      background: var(--accent-bg);
+      border: 1px solid rgba(99,102,241,0.15);
       border-radius: 10px;
-      padding: 1px 6px;
-      font-size: 9px;
-      color: var(--muted);
+      padding: 1px 7px;
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--accent-soft);
     }
 
     #log-list {
@@ -99,30 +140,38 @@
     #log-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
     .log-empty {
-      padding: 20px 12px;
+      padding: 28px 14px;
       text-align: center;
       color: var(--muted);
-      font-size: 10px;
-      letter-spacing: 0.04em;
+      font-size: 11px;
+    }
+
+    .log-empty::before {
+      content: '📋';
+      display: block;
+      font-size: 20px;
+      margin-bottom: 6px;
+      opacity: 0.4;
     }
 
     .entry {
-      border-bottom: 1px solid rgba(37,37,69,0.6);
+      border-bottom: 1px solid rgba(30,34,53,0.6);
     }
 
     .entry-row {
       display: flex;
       align-items: center;
       gap: 6px;
-      padding: 6px 12px;
+      padding: 7px 14px;
       cursor: pointer;
-      transition: background 0.1s;
+      transition: background 0.15s;
       user-select: none;
     }
 
-    .entry-row:hover { background: rgba(59,130,246,0.05); }
+    .entry-row:hover { background: var(--accent-bg); }
 
     .entry-id {
+      font-family: var(--mono);
       font-size: 9px;
       color: var(--muted);
       min-width: 54px;
@@ -131,18 +180,19 @@
 
     .entry-type {
       flex: 1;
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 700;
-      color: var(--accent);
-      letter-spacing: 0.04em;
+      color: var(--cyan);
+      letter-spacing: 0.02em;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
     .entry-time {
+      font-family: var(--mono);
       font-size: 9px;
-      color: var(--muted);
+      color: var(--text-dim);
       flex-shrink: 0;
       font-variant-numeric: tabular-nums;
     }
@@ -151,40 +201,39 @@
       display: inline-flex;
       align-items: center;
       gap: 2px;
-      padding: 1px 5px;
-      border-radius: 3px;
+      padding: 2px 6px;
+      border-radius: 4px;
       font-size: 9px;
       font-weight: 700;
       flex-shrink: 0;
     }
 
-    .badge-ok   { background: rgba(34,197,94,0.12);  color: var(--green); }
-    .badge-fail { background: rgba(239,68,68,0.12);  color: var(--red); }
-    .badge-proc { background: rgba(245,158,11,0.12); color: var(--yellow); }
+    .badge-ok   { background: rgba(16,185,129,0.1);  color: var(--green); }
+    .badge-fail { background: rgba(244,63,94,0.1);   color: var(--red); }
+    .badge-proc { background: rgba(245,158,11,0.1);  color: var(--yellow); }
 
     .expand-icon {
       font-size: 9px;
       color: var(--muted);
       flex-shrink: 0;
-      transition: transform 0.15s;
+      transition: transform 0.2s ease;
     }
 
     .entry.open .expand-icon { transform: rotate(90deg); }
 
     .entry-details {
       display: none;
-      padding: 0 12px 8px;
+      padding: 0 14px 10px;
       background: var(--surface);
     }
 
     .entry.open .entry-details { display: block; }
 
-    .detail-section {
-      margin-top: 6px;
-    }
+    .detail-section { margin-top: 6px; }
 
     .detail-label {
       font-size: 9px;
+      font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.08em;
       color: var(--muted);
@@ -192,12 +241,13 @@
     }
 
     .detail-value {
+      font-family: var(--mono);
       font-size: 9px;
       color: var(--text);
       background: var(--card);
       border: 1px solid var(--border);
-      border-radius: 3px;
-      padding: 4px 6px;
+      border-radius: 4px;
+      padding: 5px 8px;
       word-break: break-all;
       white-space: pre-wrap;
       max-height: 80px;
@@ -205,31 +255,29 @@
     }
 
     .detail-value.url {
-      color: var(--accent);
+      color: var(--accent-soft);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
       max-height: none;
     }
 
-    .detail-error {
-      color: var(--red);
-    }
+    .detail-error { color: var(--red); }
 
     .footer {
-      padding: 8px 12px;
+      padding: 10px 14px;
       border-top: 1px solid var(--border);
       background: var(--surface);
-      font-size: 9px;
+      font-size: 10px;
       color: var(--muted);
       text-align: center;
-      letter-spacing: 0.04em;
     }
   </style>
 </head>
 <body>
   <header>
-    <div class="header-title"><span>Flow Kit</span> Extension</div>
+    <img src="icon48.png" style="width:24px;height:24px;border-radius:6px;box-shadow:0 2px 6px rgba(99,102,241,0.3)">
+    <div class="header-title">FlowAgent</div>
     <button id="btn-panel">Side Panel</button>
   </header>
 

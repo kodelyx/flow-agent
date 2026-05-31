@@ -1,8 +1,13 @@
 {
   "manifest_version": 3,
-  "name": "Flow Kit",
-  "version": "0.2.0",
-  "description": "Local agent bridge for Google Flow API — captures tokens, solves reCAPTCHA, proxies API calls",
+  "name": "FlowAgent",
+  "version": "1.0.0",
+  "description": "AI Video Automation Agent — generate, edit & transform videos using Google Flow API",
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
   "permissions": ["storage", "alarms", "tabs", "webRequest", "scripting", "declarativeNetRequest", "sidePanel"],
   "host_permissions": [
     "https://labs.google/*",
@@ -44,6 +49,11 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Flow Kit"
+    "default_title": "FlowAgent",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
   }
 }

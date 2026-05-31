@@ -1,45 +1,40 @@
 #!/usr/bin/env python3
-"""Sniff server — captures all Flow UI API requests.
+"""CLI — API request sniffer.
 
-Start this, then use Flow UI normally. Every API call gets logged.
-Useful for discovering new endpoints, model keys, and payload formats.
+Captures all Flow UI API requests for endpoint discovery.
 
 Usage:
-    python sniff.py
-    python sniff.py --save sniffed.json
+    python -m cli.sniff
+    python -m cli.sniff --save sniffed.json
 """
 
 import asyncio
 import argparse
 import json
 import logging
-import signal
-import sys
 import os
+import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 
-for pkg in ["websockets"]:
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+for _pkg in ["websockets"]:
     try:
-        __import__(pkg)
+        __import__(_pkg)
     except ImportError:
-        os.system(f"{sys.executable} -m pip install {pkg} -q")
+        os.system(f"{sys.executable} -m pip install {_pkg} -q")
 
 import websockets
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
-log = logging.getLogger("sniff")
-
-# ─── Storage ─────────────────────────────────────────────────
+log = logging.getLogger("cli.sniff")
 
 all_requests = []
 
-# Noise URLs to ignore
 IGNORE = {"batchLog", "frontendEvents", "fetchUserRecommendations", "flowAgent/applets",
           "savedSharedApplets", "models/statuses"}
 
-
-# ─── HTTP Handler ────────────────────────────────────────────
 
 def make_handler(save_file):
     class Handler(BaseHTTPRequestHandler):
@@ -49,13 +44,10 @@ def make_handler(save_file):
 
             if body.get("type") == "sniffed_video_request":
                 url = body.get("url", "")
-
-                # Skip noise
                 if not any(n in url for n in IGNORE):
                     method = body.get("method", "?")
                     payload = body.get("payload", "")
 
-                    # Pretty print
                     log.info("─" * 60)
                     log.info("🔍 %s %s", method, url.split("?")[0])
                     if payload and payload != "(empty)":
@@ -73,7 +65,6 @@ def make_handler(save_file):
                     }
                     all_requests.append(entry)
 
-                    # Auto-save
                     if save_file:
                         with open(save_file, "w") as f:
                             json.dump(all_requests, f, indent=2)
@@ -97,8 +88,6 @@ def make_handler(save_file):
     return Handler
 
 
-# ─── Main ────────────────────────────────────────────────────
-
 async def on_connect(ws):
     log.info("✅ Extension connected!")
     async for raw in ws:
@@ -107,13 +96,7 @@ async def on_connect(ws):
             log.info("🔑 Token captured")
 
 
-async def main():
-    parser = argparse.ArgumentParser(description="Flow API Sniffer")
-    parser.add_argument("--save", "-s", help="Save sniffed requests to JSON file")
-    parser.add_argument("--port", type=int, default=8100, help="HTTP port (default: 8100)")
-    parser.add_argument("--ws-port", type=int, default=9222, help="WS port (default: 9222)")
-    args = parser.parse_args()
-
+async def run(args):
     Handler = make_handler(args.save)
     srv = HTTPServer(("127.0.0.1", args.port), Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -129,5 +112,14 @@ async def main():
         await asyncio.Future()
 
 
+def main():
+    parser = argparse.ArgumentParser(description="Flow API Sniffer")
+    parser.add_argument("--save", "-s", help="Save to JSON file")
+    parser.add_argument("--port", type=int, default=8100)
+    parser.add_argument("--ws-port", type=int, default=9222)
+    args = parser.parse_args()
+    asyncio.run(run(args))
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
