@@ -18,6 +18,7 @@ from omniflash import (
     ExtensionBridge, generate_video, edit_video,
     poll_status, download_video, ASPECTS, DEFAULT_PROJECT,
 )
+from omniflash.generators.i2v import upload_image, generate_video_i2v, generate_video_fl, generate_video_r2v
 
 
 async def run(args):
@@ -29,7 +30,46 @@ async def run(args):
     if not await bridge.wait_for_extension(timeout=30):
         return
 
-    if args.edit:
+    # Auto-upload local image files
+    async def resolve_image(path_or_id):
+        if os.path.exists(path_or_id):
+            mid = await upload_image(bridge, path_or_id)
+            if mid:
+                print(f"📤 Uploaded: {path_or_id} → {mid[:12]}...")
+            return mid
+        return path_or_id
+
+    if args.start and args.end:
+        # First+Last frame mode
+        start_id = await resolve_image(args.start)
+        end_id = await resolve_image(args.end)
+        if not start_id or not end_id:
+            await bridge.close()
+            return
+        media_ids = await generate_video_fl(bridge, args.prompt, aspect, args.project_id,
+                                             start_image_id=start_id, end_image_id=end_id,
+                                             duration=args.duration)
+    elif args.start:
+        # I2V mode (start image only)
+        start_id = await resolve_image(args.start)
+        if not start_id:
+            await bridge.close()
+            return
+        media_ids = await generate_video_i2v(bridge, args.prompt, aspect, args.project_id,
+                                              image_media_id=start_id, duration=args.duration)
+    elif args.ref:
+        # Reference images mode
+        ref_ids = []
+        for r in args.ref:
+            mid = await resolve_image(r)
+            if mid:
+                ref_ids.append(mid)
+        if not ref_ids:
+            await bridge.close()
+            return
+        media_ids = await generate_video_r2v(bridge, args.prompt, aspect, args.project_id,
+                                              ref_media_ids=ref_ids, duration=args.duration)
+    elif args.edit:
         media_ids = await edit_video(bridge, args.prompt, aspect, args.project_id,
                                      video_media_id=args.edit, duration=args.duration)
     else:
@@ -95,6 +135,12 @@ def main():
     parser.add_argument("--count", "-c", type=int, choices=[1, 2, 3, 4], default=1)
     parser.add_argument("--edit", "-e", metavar="MEDIA_ID",
                         help="Edit existing video (V2V mode)")
+    parser.add_argument("--start", "-s", metavar="IMAGE",
+                        help="Start frame image (file path or media_id)")
+    parser.add_argument("--end", metavar="IMAGE",
+                        help="End frame image (use with --start for FL mode)")
+    parser.add_argument("--ref", "-r", nargs="+", metavar="IMAGE",
+                        help="Reference images for R2V mode")
     parser.add_argument("--project-id", "-p", default=DEFAULT_PROJECT)
     parser.add_argument("--no-clean", action="store_true",
                         help="Skip automatic watermark removal")

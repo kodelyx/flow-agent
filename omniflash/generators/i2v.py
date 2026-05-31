@@ -88,3 +88,105 @@ async def generate_video_i2v(bridge, prompt: str, aspect: str, project_id: str,
     credits = data.get("remainingCredits", "?")
     log.info("✅ I2V submitted! %d video(s), credits=%s", len(media_ids), credits)
     return media_ids
+
+
+async def generate_video_fl(bridge, prompt: str, aspect: str, project_id: str,
+                             start_image_id: str, end_image_id: str,
+                             duration: int = 8) -> list[str] | None:
+    """Generate video with First+Last frame control.
+    
+    Video transitions smoothly from start_image to end_image.
+    """
+    model_key = f"abra_t2v_{duration}s"
+
+    request = {
+        "aspectRatio": aspect,
+        "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
+        "videoModelKey": model_key,
+        "seed": random.randint(1, 9999),
+        "metadata": {},
+        "startImage": {"mediaId": start_image_id},
+        "endImage": {"mediaId": end_image_id},
+    }
+
+    body = {
+        "mediaGenerationContext": build_generation_context(),
+        "clientContext": build_client_context(project_id),
+        "requests": [request],
+        "useV2ModelConfig": True,
+    }
+
+    log.info('🎬 FL: "%s" start=%s end=%s', prompt[:40], start_image_id[:12], end_image_id[:12])
+    result = await bridge.api_request(ENDPOINTS["generate_fl"], body)
+
+    status = result.get("status", 0)
+    if status != 200:
+        err = result.get("data", {})
+        if isinstance(err, dict):
+            err = err.get("error", {}).get("message", result.get("error", "Unknown"))
+        log.error("❌ FL failed (%s): %s", status, err)
+        return None
+
+    data = result.get("data", {})
+    media = data.get("media", [])
+    if not media:
+        log.error("❌ No media in response")
+        return None
+
+    media_ids = [m.get("name") for m in media]
+    credits = data.get("remainingCredits", "?")
+    log.info("✅ FL submitted! %d video(s), credits=%s", len(media_ids), credits)
+    return media_ids
+
+
+async def generate_video_r2v(bridge, prompt: str, aspect: str, project_id: str,
+                              ref_media_ids: list[str],
+                              duration: int = 8) -> list[str] | None:
+    """Generate video from reference images (character/style consistency).
+    
+    Uses reference images to maintain visual consistency in the generated video.
+    """
+    model_key = f"abra_t2v_{duration}s"
+
+    ref_images = [
+        {"mediaId": mid, "imageUsageType": "IMAGE_USAGE_TYPE_ASSET"}
+        for mid in ref_media_ids
+    ]
+
+    request = {
+        "aspectRatio": aspect,
+        "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
+        "videoModelKey": model_key,
+        "seed": random.randint(1, 9999),
+        "metadata": {},
+        "referenceImages": ref_images,
+    }
+
+    body = {
+        "mediaGenerationContext": build_generation_context(),
+        "clientContext": build_client_context(project_id),
+        "requests": [request],
+        "useV2ModelConfig": True,
+    }
+
+    log.info('🎬 R2V: "%s" refs=%d', prompt[:50], len(ref_media_ids))
+    result = await bridge.api_request(ENDPOINTS["generate_r2v"], body)
+
+    status = result.get("status", 0)
+    if status != 200:
+        err = result.get("data", {})
+        if isinstance(err, dict):
+            err = err.get("error", {}).get("message", result.get("error", "Unknown"))
+        log.error("❌ R2V failed (%s): %s", status, err)
+        return None
+
+    data = result.get("data", {})
+    media = data.get("media", [])
+    if not media:
+        log.error("❌ No media in response")
+        return None
+
+    media_ids = [m.get("name") for m in media]
+    credits = data.get("remainingCredits", "?")
+    log.info("✅ R2V submitted! %d video(s), credits=%s", len(media_ids), credits)
+    return media_ids

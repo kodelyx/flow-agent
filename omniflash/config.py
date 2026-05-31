@@ -37,6 +37,8 @@ ASPECTS = {
 ENDPOINTS = {
     "generate_t2v": "/v1/video:batchAsyncGenerateVideoText",
     "generate_i2v": "/v1/video:batchAsyncGenerateVideoStartImage",
+    "generate_fl": "/v1/video:batchAsyncGenerateVideoStartAndEndImage",
+    "generate_r2v": "/v1/video:batchAsyncGenerateVideoReferenceImages",
     "generate_edit": "/v1/video:batchAsyncGenerateVideoEditVideo",
     "upload_image": "/v1/flow/uploadImage",
     "poll_status": "/v1/video:batchCheckAsyncVideoGenerationStatus",
