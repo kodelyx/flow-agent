@@ -14,8 +14,8 @@ from .common import build_client_context, build_generation_context
 
 log = logging.getLogger("omniflash.generators.t2i")
 
-# Image model (nano_banana_2 = latest)
-IMAGE_MODEL = "nano_banana_2"
+# Image model (NARWHAL = Imagen 4 / Nano Banana 2)
+IMAGE_MODEL = "NARWHAL"
 
 # Image aspect ratios (more options than video)
 IMAGE_ASPECTS = {
