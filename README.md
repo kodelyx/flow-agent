@@ -62,7 +62,7 @@ This installs `websockets`, `opencv-python-headless`, and `numpy`.
 1. Open [labs.google/fx/tools/flow](https://labs.google/fx/tools/flow) in Chrome
 2. Make sure you're **logged into your Google account**
 3. The extension icon should show a **green badge** = connected
-4. **Keep this tab open** while using Omni Flash
+4. The extension auto-opens this tab when needed
 
 > ⚠️ The Flow tab auto-opens when you run a command. No manual tab management needed!
 
@@ -254,11 +254,10 @@ flow-agent/
 ├── omniflash/                  # Core Python package
 │   ├── __init__.py             # Public API exports
 │   ├── bridge.py               # ExtensionBridge (WS + HTTP + auto-retry)
-│   ├── config.py               # Config loader (models.json)
+│   ├── config.py               # All config hardcoded here
 │   ├── media_store.py          # media-id.js read/write
 │   ├── upload.py               # Video upload (GCS resumable)
-│   ├── watermark.py            # Auto watermark removal (reverse alpha blend)
-│   ├── assets/                 # Watermark alpha maps (bg_48/96.png)
+│   ├── watermark.py            # Auto watermark removal (embedded assets)
 │   └── generators/             # API functions
 │       ├── common.py           # poll_status, download_video
 │       ├── t2v.py              # Text → Video
@@ -275,7 +274,7 @@ flow-agent/
 │   ├── content.js              # Page ↔ background bridge
 │   └── injected.js             # Fetch interceptor, reCAPTCHA
 ├── omni.py                     # Backward-compatible wrapper
-├── models.json                 # API config & model keys
+├── .gitignore                  # Git ignore rules
 ├── media-id.js                 # Auto-updated filename → media_id
 ├── requirements.txt            # Python dependencies
 ├── SNIFFING.md                 # API discovery guide
