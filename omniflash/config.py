@@ -14,6 +14,9 @@ MEDIA_ID_FILE = os.path.join(ROOT_DIR, "media-id.js")
 
 DEFAULT_PROJECT = "0143adf4-5864-4cb4-abb5-fe4254ad0dc7"
 
+# Image model: NARWHAL (Imagen 4 / Nano Banana 2), GEM_PIX_2, IMAGEN_4
+IMAGE_MODEL = "NARWHAL"
+
 # ─── Hardcoded constants (never change) ──────────────────────
 
 API_KEY = "AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY"

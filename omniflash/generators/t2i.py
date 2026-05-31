@@ -9,13 +9,10 @@ import random
 import re
 import time
 
-from ..config import ENDPOINTS, DEFAULT_PROJECT
+from ..config import ENDPOINTS, DEFAULT_PROJECT, IMAGE_MODEL
 from .common import build_client_context, build_generation_context
 
 log = logging.getLogger("omniflash.generators.t2i")
-
-# Image model (NARWHAL = Imagen 4 / Nano Banana 2)
-IMAGE_MODEL = "NARWHAL"
 
 # Image aspect ratios (more options than video)
 IMAGE_ASPECTS = {
