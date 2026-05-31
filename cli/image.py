@@ -27,8 +27,24 @@ async def run(args):
     if not await bridge.wait_for_extension(timeout=30):
         return
 
+    # Handle ref images: auto-upload local files
+    ref_ids = []
+    if args.ref:
+        from omniflash.generators.i2v import upload_image
+        for ref in args.ref:
+            if os.path.exists(ref):
+                print(f"📤 Uploading reference: {ref}")
+                mid = await upload_image(bridge, ref)
+                if mid:
+                    ref_ids.append(mid)
+                    print(f"   media_id={mid[:12]}...")
+            else:
+                # Assume it's already a media_id
+                ref_ids.append(ref)
+
     results = await generate_image(
-        bridge, args.prompt, aspect, args.project_id, count=args.count
+        bridge, args.prompt, aspect, args.project_id,
+        count=args.count, ref_media_ids=ref_ids or None
     )
 
     if not results:
@@ -66,6 +82,8 @@ def main():
                         help="Aspect ratio")
     parser.add_argument("--count", "-c", type=int, choices=[1, 2, 3, 4], default=1,
                         help="Generate 1-4 variations")
+    parser.add_argument("--ref", "-r", nargs="+", metavar="IMAGE",
+                        help="Reference image(s): file path or media_id")
     parser.add_argument("--project-id", "-p", default=DEFAULT_PROJECT)
     args = parser.parse_args()
     asyncio.run(run(args))
