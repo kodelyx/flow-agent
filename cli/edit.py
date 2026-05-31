@@ -110,14 +110,24 @@ async def edit_segment(bridge, prompt, aspect, project_id, media_id,
         return None
 
     out_path = os.path.join(output_dir, f"segment_{segment_num:03d}.mp4")
-    if await download_video(bridge, result_media_id, out_path):
+    temp_dir = os.path.join(output_dir, ".temp")
+    os.makedirs(temp_dir, exist_ok=True)
+    temp_path = os.path.join(temp_dir, f"segment_{segment_num:03d}.mp4")
+
+    if await download_video(bridge, result_media_id, temp_path):
         # Auto-remove watermark
         try:
             from omniflash.watermark import remove_watermark_video
-            clean_path = remove_watermark_video(out_path, show_progress=False)
-            os.replace(clean_path, out_path)
+            remove_watermark_video(temp_path, out_path, show_progress=False)
+            os.remove(temp_path)
         except Exception as e:
+            os.replace(temp_path, out_path)
             log.warning("⚠️  Watermark removal failed for segment %d: %s", segment_num, e)
+        # Cleanup empty .temp dir
+        try:
+            os.rmdir(temp_dir)
+        except OSError:
+            pass
         return out_path
     return None
 

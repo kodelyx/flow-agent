@@ -52,17 +52,33 @@ async def run(args):
             base, ext = os.path.splitext(args.output)
             out_path = f"{base}_{i+1}{ext}"
 
-        if await download_video(bridge, media_id, out_path):
+        # Setup temp dir for download
+        out_dir = os.path.dirname(out_path) or "."
+        temp_dir = os.path.join(out_dir, ".temp")
+        os.makedirs(temp_dir, exist_ok=True)
+        temp_path = os.path.join(temp_dir, os.path.basename(out_path))
+
+        if await download_video(bridge, media_id, temp_path):
             # Auto-remove watermark unless --no-clean
             if not args.no_clean:
                 try:
                     from omniflash.watermark import remove_watermark_video
-                    clean_path = remove_watermark_video(out_path)
-                    # Replace original with clean version
-                    os.replace(clean_path, out_path)
+                    remove_watermark_video(temp_path, out_path)
+                    os.remove(temp_path)
                     print(f"🧹 Watermark removed!")
                 except Exception as e:
+                    # Fallback: move temp to output as-is
+                    os.replace(temp_path, out_path)
                     print(f"⚠️  Watermark removal failed: {e}")
+            else:
+                os.replace(temp_path, out_path)
+
+            # Cleanup empty .temp dir
+            try:
+                os.rmdir(temp_dir)
+            except OSError:
+                pass
+
             print(f"🎉 Done! {out_path}")
             if sys.platform == "darwin":
                 os.system(f'open "{out_path}"')
