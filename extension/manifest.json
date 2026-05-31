@@ -3,6 +3,11 @@
   "name": "Flow Agent",
   "version": "1.0.0",
   "description": "Automate Google Flow — T2V, V2V, I2V video + T2I, I2I unlimited image generation from terminal",
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
   "permissions": ["storage", "alarms", "tabs", "webRequest", "scripting", "declarativeNetRequest", "sidePanel"],
   "host_permissions": [
     "https://labs.google/*",
@@ -44,6 +49,11 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Flow Agent"
+    "default_title": "Flow Agent",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
   }
 }
