@@ -120,8 +120,6 @@ async def run(args):
                 pass
 
             print(f"🎉 Done! {out_path}")
-            if sys.platform == "darwin":
-                os.system(f'open "{out_path}"')
 
     await bridge.close()
 
