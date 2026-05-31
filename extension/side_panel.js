@@ -1,5 +1,5 @@
 /**
- * Flow Kit — Side Panel
+ * Omni Flash Agent — Side Panel
  * Displays live connection status, metrics, and request log.
  */
 
