@@ -1,23 +1,18 @@
 """Flow Agent — Configuration.
 
-Hardcoded constants + user config from models.json (only project ID).
+All constants hardcoded. No external config files needed.
 """
 
-import json
 import os
 
 # ─── Paths ───────────────────────────────────────────────────
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODELS_FILE = os.path.join(ROOT_DIR, "models.json")
 MEDIA_ID_FILE = os.path.join(ROOT_DIR, "media-id.js")
 
-# ─── User config (only what changes per user) ────────────────
+# ─── Project ─────────────────────────────────────────────────
 
-with open(MODELS_FILE) as _f:
-    _USER_CFG = json.load(_f)
-
-DEFAULT_PROJECT = _USER_CFG["default_project"]
+DEFAULT_PROJECT = "0143adf4-5864-4cb4-abb5-fe4254ad0dc7"
 
 # ─── Hardcoded constants (never change) ──────────────────────
 
