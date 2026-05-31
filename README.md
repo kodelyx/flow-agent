@@ -11,7 +11,9 @@ No API key needed. Uses your Google account's free Flow credits via a Chrome ext
 | Feature | What it does | Time | Status |
 |---------|-------------|------|--------|
 | **T2V** | Generate video from text prompt | ~44s | ✅ Working |
+| **T2I** | Generate image from text prompt | ~10-30s | ✅ Working |
 | **V2V** | Edit/restyle existing video | ~3min | ✅ Working |
+| **I2I** | Edit image with reference | ~10-30s | ✅ Working |
 | **I2V** | Animate a still image into video | ~44s | ✅ Working |
 | **Upload** | Upload video/image to Flow | ~12s | ✅ Working |
 | **Watermark Remove** | Auto-remove Gemini watermark (~1s) | ~1s | ✅ Auto |
@@ -102,6 +104,35 @@ python -m cli.generate "Cyberpunk city at night" --count 4
 | `--no-clean` | | - | Skip auto watermark removal |
 
 ---
+
+### Text → Image (T2I)
+
+Generate images from a text description.
+
+```bash
+# Basic (portrait 9:16)
+python -m cli.image "A dragon breathing fire in a cyberpunk city"
+
+# Landscape
+python -m cli.image "Mountain sunset" --aspect landscape -o sunset.png
+
+# Square (for logos, icons)
+python -m cli.image "Minimal logo design" --aspect square
+
+# Generate 4 variations
+python -m cli.image "Abstract art" --count 4
+
+# I2I: Edit with reference image
+python -m cli.image "Make it anime style" --ref original.png -o anime.png
+```
+
+**CLI Options:**
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--output` | `-o` | `output/image.png` | Output filename |
+| `--aspect` | `-a` | `portrait` | `portrait`, `landscape`, `square`, `4x3`, `3x4` |
+| `--count` | `-c` | `1` | Generate 1-4 variations |
+| `--ref` | `-r` | - | Reference image(s) for I2I |
 
 ### Upload Video
 
@@ -261,10 +292,12 @@ flow-agent/
 │   └── generators/             # API functions
 │       ├── common.py           # poll_status, download_video
 │       ├── t2v.py              # Text → Video
+│       ├── t2i.py              # Text → Image + I2I
 │       ├── v2v.py              # Video → Video (edit)
 │       └── i2v.py              # Image → Video + upload_image
 ├── cli/                        # CLI entry points
 │   ├── generate.py             # python -m cli.generate
+│   ├── image.py                # python -m cli.image
 │   ├── upload.py               # python -m cli.upload
 │   ├── edit.py                 # python -m cli.edit
 │   └── sniff.py                # python -m cli.sniff
