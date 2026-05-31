@@ -111,6 +111,13 @@ async def edit_segment(bridge, prompt, aspect, project_id, media_id,
 
     out_path = os.path.join(output_dir, f"segment_{segment_num:03d}.mp4")
     if await download_video(bridge, result_media_id, out_path):
+        # Auto-remove watermark
+        try:
+            from omniflash.watermark import remove_watermark_video
+            clean_path = remove_watermark_video(out_path, show_progress=False)
+            os.replace(clean_path, out_path)
+        except Exception as e:
+            log.warning("⚠️  Watermark removal failed for segment %d: %s", segment_num, e)
         return out_path
     return None
 
@@ -196,6 +203,13 @@ async def run(args):
                 "-i", concat_file, "-c", "copy", merge_path
             ], capture_output=True)
             os.remove(concat_file)
+            # Auto-remove watermark from merged output
+            try:
+                from omniflash.watermark import remove_watermark_video
+                clean_path = remove_watermark_video(merge_path, show_progress=False)
+                os.replace(clean_path, merge_path)
+            except Exception:
+                pass
             log.info("✅ Merged: %s", merge_path)
             if sys.platform == "darwin":
                 os.system(f'open "{merge_path}"')

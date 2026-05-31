@@ -1,6 +1,6 @@
-# ⚡ Omni Flash
+# ⚡ Flow Agent
 
-**Automate Google's Gemini Omni video generation model — Text→Video, Image→Video, Video→Video editing — all from the terminal.**
+**Automate Google Flow's Omni Flash model — Text→Video, Image→Video, Video→Video editing — all from the terminal.**
 
 No API key needed. Uses your Google account's free Flow credits via a Chrome extension bridge.
 
@@ -14,7 +14,8 @@ No API key needed. Uses your Google account's free Flow credits via a Chrome ext
 | **V2V** | Edit/restyle existing video | ~3min | ✅ Working |
 | **I2V** | Animate a still image into video | ~44s | ✅ Working |
 | **Upload** | Upload video/image to Flow | ~12s | ✅ Working |
-| **Batch Upload** | Upload entire folder of videos | varies | ✅ Working |
+| **Watermark Remove** | Auto-remove Gemini watermark (~1s) | ~1s | ✅ Auto |
+| **Auto-Retry** | Auto-open/refresh Flow tab for token | auto | ✅ Built-in |
 | **API Sniffer** | Discover new endpoints/payloads | - | ✅ Working |
 
 ---
@@ -35,8 +36,8 @@ No API key needed. Uses your Google account's free Flow credits via a Chrome ext
 ### Step 1: Clone the repo
 
 ```bash
-git clone https://github.com/kodelyx/omni-flash.git
-cd omni-flash
+git clone https://github.com/kodelyx/flow-agent.git
+cd flow-agent
 ```
 
 ### Step 2: Install Python dependencies
@@ -45,7 +46,7 @@ cd omni-flash
 pip install -r requirements.txt
 ```
 
-This installs `websockets` (the only dependency).
+This installs `websockets`, `opencv-python-headless`, and `numpy`.
 
 ### Step 3: Install the Chrome Extension
 
@@ -54,7 +55,7 @@ This installs `websockets` (the only dependency).
 3. Toggle **"Developer mode"** ON (top-right corner)
 4. Click **"Load unpacked"**
 5. Select the `extension/` folder from this repo
-6. You should see the FlowKit extension appear
+6. You should see the **Flow Agent** extension appear
 
 ### Step 4: Open Google Flow
 
@@ -63,7 +64,7 @@ This installs `websockets` (the only dependency).
 3. The extension icon should show a **green badge** = connected
 4. **Keep this tab open** while using Omni Flash
 
-> ⚠️ The Flow tab MUST stay open. The extension captures auth tokens from it.
+> ⚠️ The Flow tab auto-opens when you run a command. No manual tab management needed!
 
 ---
 
@@ -98,6 +99,7 @@ python -m cli.generate "Cyberpunk city at night" --count 4
 | `--duration` | `-d` | `10` | `4`, `6`, `8`, or `10` seconds |
 | `--count` | `-c` | `1` | Generate 1-4 videos |
 | `--edit` | `-e` | - | Pass media_id for V2V edit mode |
+| `--no-clean` | | - | Skip auto watermark removal |
 
 ---
 
@@ -248,13 +250,15 @@ all_entries = media_store.read_entries()       # Get all entries
 ## 📁 Project Structure
 
 ```
-omni-flash/
+flow-agent/
 ├── omniflash/                  # Core Python package
 │   ├── __init__.py             # Public API exports
-│   ├── bridge.py               # ExtensionBridge (WS + HTTP server)
+│   ├── bridge.py               # ExtensionBridge (WS + HTTP + auto-retry)
 │   ├── config.py               # Config loader (models.json)
 │   ├── media_store.py          # media-id.js read/write
 │   ├── upload.py               # Video upload (GCS resumable)
+│   ├── watermark.py            # Auto watermark removal (reverse alpha blend)
+│   ├── assets/                 # Watermark alpha maps (bg_48/96.png)
 │   └── generators/             # API functions
 │       ├── common.py           # poll_status, download_video
 │       ├── t2v.py              # Text → Video
@@ -297,7 +301,7 @@ omni-flash/
            │ HTTP callback (:8100)
            ▼
 ┌─────────────────────────────────┐
-│  Chrome Extension (FlowKit)     │
+│  Chrome Extension (Flow Agent) │
 │  Auth token + reCAPTCHA solving │
 └──────────┬──────────────────────┘
            │ HTTPS (browser cookies)
@@ -354,9 +358,10 @@ omni-flash/
 
 ## ⚠️ Important Notes
 
-- **Flow tab must stay open** in Chrome while using Omni Flash
+- **Flow tab auto-opens** — no manual tab management needed
 - Uses your Google account's **free Flow credits** (check remaining in Flow UI)
-- Extension auto-reconnects if you reload the Flow tab
+- Extension auto-reconnects and auto-retries (3 attempts)
+- **Watermark auto-removed** on every generated video (~1s)
 - `media-id.js` auto-updates on every upload (video or image)
 - All generated videos save to the `output/` directory by default
 - Old `from omni import ...` syntax still works (backward compatible)

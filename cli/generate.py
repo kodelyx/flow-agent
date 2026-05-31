@@ -53,6 +53,16 @@ async def run(args):
             out_path = f"{base}_{i+1}{ext}"
 
         if await download_video(bridge, media_id, out_path):
+            # Auto-remove watermark unless --no-clean
+            if not args.no_clean:
+                try:
+                    from omniflash.watermark import remove_watermark_video
+                    clean_path = remove_watermark_video(out_path)
+                    # Replace original with clean version
+                    os.replace(clean_path, out_path)
+                    print(f"🧹 Watermark removed!")
+                except Exception as e:
+                    print(f"⚠️  Watermark removal failed: {e}")
             print(f"🎉 Done! {out_path}")
             if sys.platform == "darwin":
                 os.system(f'open "{out_path}"')
@@ -70,6 +80,8 @@ def main():
     parser.add_argument("--edit", "-e", metavar="MEDIA_ID",
                         help="Edit existing video (V2V mode)")
     parser.add_argument("--project-id", "-p", default=DEFAULT_PROJECT)
+    parser.add_argument("--no-clean", action="store_true",
+                        help="Skip automatic watermark removal")
     args = parser.parse_args()
     asyncio.run(run(args))
 
