@@ -1,35 +1,43 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <meta charset="utf-8">
   <title>FlowAgent</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    :root {
-      --bg:         #08090e;
-      --surface:    #0e1018;
-      --card:       #141622;
-      --card-hover: #1a1d2e;
-      --border:     #1e2235;
-      --border-glow:#2a3050;
-      --accent:     #6366f1;
-      --accent-soft:#818cf8;
-      --accent-bg:  rgba(99,102,241,0.08);
-      --green:      #10b981;
-      --red:        #f43f5e;
-      --yellow:     #f59e0b;
-      --cyan:       #22d3ee;
-      --text:       #e8eaf0;
-      --text-dim:   #9ca3af;
-      --muted:      #6b7280;
-      --font:       'Inter', -apple-system, sans-serif;
-      --mono:       'SF Mono', 'Fira Code', monospace;
-      --radius:     8px;
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
     }
 
-    html, body {
+    :root {
+      --bg: #08090e;
+      --surface: #0e1018;
+      --card: #141622;
+      --card-hover: #1a1d2e;
+      --border: #1e2235;
+      --border-glow: #2a3050;
+      --accent: #6366f1;
+      --accent-soft: #818cf8;
+      --accent-bg: rgba(99, 102, 241, 0.08);
+      --green: #10b981;
+      --red: #f43f5e;
+      --yellow: #f59e0b;
+      --cyan: #22d3ee;
+      --text: #e8eaf0;
+      --text-dim: #9ca3af;
+      --muted: #6b7280;
+      --font: 'Inter', -apple-system, sans-serif;
+      --mono: 'SF Mono', 'Fira Code', monospace;
+      --radius: 8px;
+    }
+
+    html,
+    body {
       width: 360px;
       min-height: 200px;
       background: var(--bg);
@@ -46,7 +54,7 @@
       gap: 10px;
       padding: 12px 14px 10px;
       border-bottom: 1px solid var(--border);
-      background: linear-gradient(180deg, rgba(99,102,241,0.06) 0%, var(--surface) 100%);
+      background: linear-gradient(180deg, rgba(99, 102, 241, 0.06) 0%, var(--surface) 100%);
       position: relative;
     }
 
@@ -57,7 +65,7 @@
       left: 14px;
       right: 14px;
       height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(99,102,241,0.25), transparent);
+      background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.25), transparent);
     }
 
     .logo {
@@ -71,7 +79,7 @@
       font-weight: 800;
       font-size: 12px;
       color: #fff;
-      box-shadow: 0 2px 6px rgba(99,102,241,0.3);
+      box-shadow: 0 2px 6px rgba(99, 102, 241, 0.3);
     }
 
     .header-title {
@@ -95,12 +103,12 @@
       color: #fff;
       cursor: pointer;
       transition: all 0.2s;
-      box-shadow: 0 2px 6px rgba(99,102,241,0.2);
+      box-shadow: 0 2px 6px rgba(99, 102, 241, 0.2);
     }
 
     #btn-panel:hover {
       background: linear-gradient(135deg, #818cf8, #8b5cf6);
-      box-shadow: 0 3px 10px rgba(99,102,241,0.3);
+      box-shadow: 0 3px 10px rgba(99, 102, 241, 0.3);
       transform: translateY(-1px);
     }
 
@@ -120,7 +128,7 @@
 
     #log-count {
       background: var(--accent-bg);
-      border: 1px solid rgba(99,102,241,0.15);
+      border: 1px solid rgba(99, 102, 241, 0.15);
       border-radius: 10px;
       padding: 1px 7px;
       font-size: 10px;
@@ -135,9 +143,18 @@
       scrollbar-color: var(--border) transparent;
     }
 
-    #log-list::-webkit-scrollbar { width: 4px; }
-    #log-list::-webkit-scrollbar-track { background: transparent; }
-    #log-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    #log-list::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    #log-list::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    #log-list::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 2px;
+    }
 
     .log-empty {
       padding: 28px 14px;
@@ -155,7 +172,7 @@
     }
 
     .entry {
-      border-bottom: 1px solid rgba(30,34,53,0.6);
+      border-bottom: 1px solid rgba(30, 34, 53, 0.6);
     }
 
     .entry-row {
@@ -168,7 +185,9 @@
       user-select: none;
     }
 
-    .entry-row:hover { background: var(--accent-bg); }
+    .entry-row:hover {
+      background: var(--accent-bg);
+    }
 
     .entry-id {
       font-family: var(--mono);
@@ -208,9 +227,20 @@
       flex-shrink: 0;
     }
 
-    .badge-ok   { background: rgba(16,185,129,0.1);  color: var(--green); }
-    .badge-fail { background: rgba(244,63,94,0.1);   color: var(--red); }
-    .badge-proc { background: rgba(245,158,11,0.1);  color: var(--yellow); }
+    .badge-ok {
+      background: rgba(16, 185, 129, 0.1);
+      color: var(--green);
+    }
+
+    .badge-fail {
+      background: rgba(244, 63, 94, 0.1);
+      color: var(--red);
+    }
+
+    .badge-proc {
+      background: rgba(245, 158, 11, 0.1);
+      color: var(--yellow);
+    }
 
     .expand-icon {
       font-size: 9px;
@@ -219,7 +249,9 @@
       transition: transform 0.2s ease;
     }
 
-    .entry.open .expand-icon { transform: rotate(90deg); }
+    .entry.open .expand-icon {
+      transform: rotate(90deg);
+    }
 
     .entry-details {
       display: none;
@@ -227,9 +259,13 @@
       background: var(--surface);
     }
 
-    .entry.open .entry-details { display: block; }
+    .entry.open .entry-details {
+      display: block;
+    }
 
-    .detail-section { margin-top: 6px; }
+    .detail-section {
+      margin-top: 6px;
+    }
 
     .detail-label {
       font-size: 9px;
@@ -262,7 +298,9 @@
       max-height: none;
     }
 
-    .detail-error { color: var(--red); }
+    .detail-error {
+      color: var(--red);
+    }
 
     .footer {
       padding: 10px 14px;
@@ -274,6 +312,7 @@
     }
   </style>
 </head>
+
 <body>
   <header>
     <img src="icon48.png" style="width:24px;height:24px;border-radius:6px;box-shadow:0 2px 6px rgba(99,102,241,0.3)">
@@ -294,4 +333,5 @@
 
   <script src="popup.js"></script>
 </body>
+
 </html>

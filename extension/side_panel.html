@@ -1,40 +1,48 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <meta charset="utf-8">
   <title>FlowAgent</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    :root {
-      --bg:         #08090e;
-      --surface:    #0e1018;
-      --card:       #141622;
-      --card-hover: #1a1d2e;
-      --border:     #1e2235;
-      --border-glow:#2a3050;
-      --accent:     #6366f1;
-      --accent-soft:#818cf8;
-      --accent-bg:  rgba(99,102,241,0.08);
-      --accent-glow:rgba(99,102,241,0.25);
-      --green:      #10b981;
-      --green-bg:   rgba(16,185,129,0.1);
-      --red:        #f43f5e;
-      --red-bg:     rgba(244,63,94,0.1);
-      --yellow:     #f59e0b;
-      --yellow-bg:  rgba(245,158,11,0.1);
-      --cyan:       #22d3ee;
-      --text:       #e8eaf0;
-      --text-dim:   #9ca3af;
-      --muted:      #6b7280;
-      --font:       'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      --mono:       'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-      --radius:     10px;
-      --radius-sm:  6px;
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
     }
 
-    html, body {
+    :root {
+      --bg: #08090e;
+      --surface: #0e1018;
+      --card: #141622;
+      --card-hover: #1a1d2e;
+      --border: #1e2235;
+      --border-glow: #2a3050;
+      --accent: #6366f1;
+      --accent-soft: #818cf8;
+      --accent-bg: rgba(99, 102, 241, 0.08);
+      --accent-glow: rgba(99, 102, 241, 0.25);
+      --green: #10b981;
+      --green-bg: rgba(16, 185, 129, 0.1);
+      --red: #f43f5e;
+      --red-bg: rgba(244, 63, 94, 0.1);
+      --yellow: #f59e0b;
+      --yellow-bg: rgba(245, 158, 11, 0.1);
+      --cyan: #22d3ee;
+      --text: #e8eaf0;
+      --text-dim: #9ca3af;
+      --muted: #6b7280;
+      --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      --radius: 10px;
+      --radius-sm: 6px;
+    }
+
+    html,
+    body {
       height: 100%;
       margin: 0;
     }
@@ -58,7 +66,7 @@
       align-items: center;
       gap: 10px;
       padding: 14px 16px 12px;
-      background: linear-gradient(180deg, rgba(99,102,241,0.06) 0%, var(--surface) 100%);
+      background: linear-gradient(180deg, rgba(99, 102, 241, 0.06) 0%, var(--surface) 100%);
       border-bottom: 1px solid var(--border);
       position: relative;
     }
@@ -84,11 +92,13 @@
       font-weight: 800;
       font-size: 14px;
       color: #fff;
-      box-shadow: 0 2px 8px rgba(99,102,241,0.3);
+      box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
       flex-shrink: 0;
     }
 
-    .header-info { flex: 1; }
+    .header-info {
+      flex: 1;
+    }
 
     .header-title {
       font-size: 14px;
@@ -118,13 +128,20 @@
 
     #conn-dot.on {
       background: var(--green);
-      box-shadow: 0 0 8px 2px rgba(16,185,129,0.4);
+      box-shadow: 0 0 8px 2px rgba(16, 185, 129, 0.4);
       animation: pulse-glow 2.5s ease-in-out infinite;
     }
 
     @keyframes pulse-glow {
-      0%, 100% { box-shadow: 0 0 6px 1px rgba(16,185,129,0.3); }
-      50%       { box-shadow: 0 0 14px 4px rgba(16,185,129,0.15); }
+
+      0%,
+      100% {
+        box-shadow: 0 0 6px 1px rgba(16, 185, 129, 0.3);
+      }
+
+      50% {
+        box-shadow: 0 0 14px 4px rgba(16, 185, 129, 0.15);
+      }
     }
 
     /* Toggle */
@@ -150,7 +167,11 @@
       cursor: pointer;
     }
 
-    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
 
     .toggle-track {
       position: absolute;
@@ -171,14 +192,15 @@
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
-    .toggle input:checked ~ .toggle-track {
+    .toggle input:checked~.toggle-track {
       background: var(--accent);
-      box-shadow: 0 0 12px rgba(99,102,241,0.3);
+      box-shadow: 0 0 12px rgba(99, 102, 241, 0.3);
     }
-    .toggle input:checked ~ .toggle-thumb {
+
+    .toggle input:checked~.toggle-thumb {
       transform: translateX(16px);
       background: #fff;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
     }
 
     /* ── Metrics ─────────────────────────────────── */
@@ -215,8 +237,13 @@
       font-variant-numeric: tabular-nums;
     }
 
-    .metric-value.green { color: var(--green); }
-    .metric-value.red   { color: var(--red); }
+    .metric-value.green {
+      color: var(--green);
+    }
+
+    .metric-value.red {
+      color: var(--red);
+    }
 
     .metric-label {
       font-size: 9px;
@@ -258,9 +285,20 @@
       color: var(--muted);
     }
 
-    #state-badge.idle    { background: var(--green-bg); color: var(--green); }
-    #state-badge.running { background: var(--yellow-bg); color: var(--yellow); }
-    #state-badge.off     { background: var(--border); color: var(--muted); }
+    #state-badge.idle {
+      background: var(--green-bg);
+      color: var(--green);
+    }
+
+    #state-badge.running {
+      background: var(--yellow-bg);
+      color: var(--yellow);
+    }
+
+    #state-badge.off {
+      background: var(--border);
+      color: var(--muted);
+    }
 
     #token-status {
       margin-left: auto;
@@ -279,12 +317,29 @@
       display: inline-block;
     }
 
-    #token-status.ok   { color: var(--green); }
-    #token-status.ok::before { background: var(--green); }
-    #token-status.bad  { color: var(--red); }
-    #token-status.bad::before { background: var(--red); }
-    #token-status.warn { color: var(--yellow); }
-    #token-status.warn::before { background: var(--yellow); }
+    #token-status.ok {
+      color: var(--green);
+    }
+
+    #token-status.ok::before {
+      background: var(--green);
+    }
+
+    #token-status.bad {
+      color: var(--red);
+    }
+
+    #token-status.bad::before {
+      background: var(--red);
+    }
+
+    #token-status.warn {
+      color: var(--yellow);
+    }
+
+    #token-status.warn::before {
+      background: var(--yellow);
+    }
 
     /* ── Log section ─────────────────────────────── */
     .log-section {
@@ -310,7 +365,7 @@
 
     #log-count {
       background: var(--accent-bg);
-      border: 1px solid rgba(99,102,241,0.15);
+      border: 1px solid rgba(99, 102, 241, 0.15);
       border-radius: 10px;
       padding: 1px 8px;
       font-size: 10px;
@@ -325,10 +380,22 @@
       scrollbar-color: var(--border) transparent;
     }
 
-    .log-table-wrap::-webkit-scrollbar { width: 5px; }
-    .log-table-wrap::-webkit-scrollbar-track { background: transparent; }
-    .log-table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-    .log-table-wrap::-webkit-scrollbar-thumb:hover { background: var(--border-glow); }
+    .log-table-wrap::-webkit-scrollbar {
+      width: 5px;
+    }
+
+    .log-table-wrap::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .log-table-wrap::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px;
+    }
+
+    .log-table-wrap::-webkit-scrollbar-thumb:hover {
+      background: var(--border-glow);
+    }
 
     table {
       width: 100%;
@@ -350,8 +417,13 @@
       z-index: 1;
     }
 
-    thead th:first-child { width: 60px; }
-    thead th:last-child { width: 36%; }
+    thead th:first-child {
+      width: 60px;
+    }
+
+    thead th:last-child {
+      width: 36%;
+    }
 
     tbody tr {
       border-bottom: 1px solid rgba(30, 34, 53, 0.6);
@@ -377,7 +449,10 @@
       transition: color 0.15s;
     }
 
-    .td-id:hover { color: var(--accent); text-decoration: underline; }
+    .td-id:hover {
+      color: var(--accent);
+      text-decoration: underline;
+    }
 
     .td-type {
       font-family: var(--font);
@@ -406,9 +481,20 @@
       letter-spacing: 0.03em;
     }
 
-    .badge-ok   { background: var(--green-bg); color: var(--green); }
-    .badge-fail { background: var(--red-bg);   color: var(--red); }
-    .badge-proc { background: var(--yellow-bg); color: var(--yellow); }
+    .badge-ok {
+      background: var(--green-bg);
+      color: var(--green);
+    }
+
+    .badge-fail {
+      background: var(--red-bg);
+      color: var(--red);
+    }
+
+    .badge-proc {
+      background: var(--yellow-bg);
+      color: var(--yellow);
+    }
 
     .td-error {
       max-width: 120px;
@@ -419,7 +505,9 @@
       cursor: default;
     }
 
-    .td-error.empty { color: var(--muted); }
+    .td-error.empty {
+      color: var(--muted);
+    }
 
     .log-empty {
       padding: 32px 16px;
@@ -442,7 +530,7 @@
       display: none;
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.7);
+      background: rgba(0, 0, 0, 0.7);
       backdrop-filter: blur(4px);
       z-index: 100;
     }
@@ -455,8 +543,13 @@
     }
 
     @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
+      from {
+        opacity: 0;
+      }
+
+      to {
+        opacity: 1;
+      }
     }
 
     .detail-panel {
@@ -468,7 +561,7 @@
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
     }
 
     .detail-header {
@@ -537,8 +630,13 @@
       font-size: 10px;
     }
 
-    .detail-value.error { color: var(--red); }
-    .detail-value.ok { color: var(--green); }
+    .detail-value.error {
+      color: var(--red);
+    }
+
+    .detail-value.ok {
+      color: var(--green);
+    }
 
     /* ── Action buttons ─────────────────────────── */
     .actions {
@@ -580,14 +678,14 @@
       background: linear-gradient(135deg, var(--accent), #7c3aed);
       border-color: transparent;
       color: #fff;
-      box-shadow: 0 2px 8px rgba(99,102,241,0.25);
+      box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
     }
 
     .btn-primary:hover {
       background: linear-gradient(135deg, #818cf8, #8b5cf6);
       border-color: transparent;
       color: #fff;
-      box-shadow: 0 4px 14px rgba(99,102,241,0.35);
+      box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
     }
 
     /* ── Signature ──────────────────────────────── */
@@ -608,24 +706,43 @@
       transition: color 0.15s;
     }
 
-    .signature a:hover { color: var(--text); }
+    .signature a:hover {
+      color: var(--text);
+    }
 
     /* ── Animations ──────────────────────────────── */
     @keyframes slideUp {
-      from { opacity: 0; transform: translateY(6px); }
-      to   { opacity: 1; transform: translateY(0); }
+      from {
+        opacity: 0;
+        transform: translateY(6px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
-    .metric-card { animation: slideUp 0.3s ease forwards; }
-    .metric-card:nth-child(2) { animation-delay: 0.05s; }
-    .metric-card:nth-child(3) { animation-delay: 0.1s; }
+    .metric-card {
+      animation: slideUp 0.3s ease forwards;
+    }
+
+    .metric-card:nth-child(2) {
+      animation-delay: 0.05s;
+    }
+
+    .metric-card:nth-child(3) {
+      animation-delay: 0.1s;
+    }
   </style>
 </head>
+
 <body>
 
   <!-- Header -->
   <header>
-    <img src="icon48.png" class="logo-img" style="width:28px;height:28px;border-radius:8px;box-shadow:0 2px 8px rgba(99,102,241,0.3)">
+    <img src="icon48.png" class="logo-img"
+      style="width:28px;height:28px;border-radius:8px;box-shadow:0 2px 8px rgba(99,102,241,0.3)">
     <div class="header-info">
       <div class="header-title">FlowAgent</div>
       <div class="header-sub">AI Video Automation Agent</div>
@@ -700,7 +817,10 @@
   <!-- Signature -->
   <div class="signature">
     <a href="https://github.com/kodelyx/omni-flash" target="_blank">
-      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:3px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>FlowAgent</a> · built by <a href="https://kodelyx.com" target="_blank">kodelyx</a>
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:3px">
+        <path
+          d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z" />
+      </svg>FlowAgent</a> · built by <a href="https://kodelyx.com" target="_blank">kodelyx</a>
   </div>
 
   <!-- Detail overlay -->
@@ -716,4 +836,5 @@
 
   <script src="side_panel.js"></script>
 </body>
+
 </html>
