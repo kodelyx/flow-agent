@@ -213,6 +213,57 @@ function connectToAgent() {
             metrics,
           },
         });
+      } else if (msg.method === 'open_flow_tab') {
+        // Python bridge asks us to open/focus a Flow tab
+        console.log('[Flow Agent] Agent requested: open Flow tab');
+        const tabs = await chrome.tabs.query({
+          url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
+        });
+        if (tabs.length) {
+          // Tab exists — refresh it to trigger fresh API calls → token capture
+          await chrome.tabs.reload(tabs[0].id);
+          console.log('[Flow Agent] Refreshed existing Flow tab');
+        } else {
+          // No tab — open one (active so it loads properly)
+          await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow', active: true });
+          console.log('[Flow Agent] Opened new Flow tab');
+        }
+        // Wait for page to load and make API calls that trigger token capture
+        await sleep(5000);
+        // If token was captured by webRequest during page load, send it
+        if (flowKey && ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+          console.log('[Flow Agent] Sent stored token after tab open');
+        } else {
+          // Try reading from storage as fallback
+          const data = await chrome.storage.local.get(['flowKey']);
+          if (data.flowKey) {
+            flowKey = data.flowKey;
+            if (ws?.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+              console.log('[Flow Agent] Sent token from storage after tab open');
+            }
+          }
+        }
+      } else if (msg.method === 'refresh_flow_tab') {
+        // Python bridge asks us to refresh token
+        console.log('[Flow Agent] Agent requested: refresh token');
+        await captureTokenFromFlowTab();
+        await sleep(3000);
+        // Actively send token if we have one
+        if (flowKey && ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+          console.log('[Flow Agent] Sent token after refresh');
+        } else {
+          const data = await chrome.storage.local.get(['flowKey']);
+          if (data.flowKey) {
+            flowKey = data.flowKey;
+            if (ws?.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+              console.log('[Flow Agent] Sent token from storage after refresh');
+            }
+          }
+        }
       } else if (msg.type === 'callback_secret') {
         callbackSecret = msg.secret;
         chrome.storage.local.set({ callbackSecret: msg.secret });

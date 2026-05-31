@@ -44,14 +44,88 @@ class ExtensionBridge:
         log.info("⚡ HTTP callback on http://127.0.0.1:%d", HTTP_PORT)
         log.info("⏳ Waiting for Chrome extension to connect...")
 
-    async def wait_for_extension(self, timeout=60):
-        """Wait until extension connects and sends flow key."""
+    async def wait_for_extension(self, timeout=90, max_retries=3):
+        """Wait until extension connects and sends flow key.
+        
+        Phase 1: Wait for WebSocket connection from extension.
+        Phase 2: If no token, auto-open/refresh Flow tab and wait for token.
+        """
+        # Phase 1: Wait for WS connection
+        try:
+            await asyncio.wait_for(self._wait_for_ws(), 30)
+        except asyncio.TimeoutError:
+            log.error("❌ Extension didn't connect in 30s")
+            log.error("   Make sure Flow Agent extension is installed and enabled in Chrome")
+            return False
+
+        # If token already present, we're good
+        if self._flow_key:
+            return True
+
+        # Phase 2: Extension connected but no token — auto-fix
+        log.info("⚠️  Extension connected but no auth token — auto-fixing...")
+        
+        for attempt in range(1, max_retries + 1):
+            log.info("🔄 Attempt %d/%d: Opening/refreshing Flow tab...", attempt, max_retries)
+            await self._request_flow_tab()
+            
+            # Wait for token to arrive (token_captured message)
+            token_arrived = await self._wait_for_token(20)
+            if token_arrived:
+                log.info("✅ Token captured after auto-fix!")
+                return True
+            
+            log.warning("⏳ Token not captured yet...")
+
+        log.error("❌ Could not get auth token after %d retries", max_retries)
+        log.error("   Make sure you're logged into Google at labs.google/fx/tools/flow")
+        return False
+
+    async def _wait_for_ws(self):
+        """Wait until a WebSocket connection is established."""
+        while not self._ws:
+            await asyncio.sleep(0.5)
+
+    async def _wait_for_token(self, timeout):
+        """Wait until a valid token is captured."""
+        self._connected.clear()
         try:
             await asyncio.wait_for(self._connected.wait(), timeout)
             return True
         except asyncio.TimeoutError:
-            log.error("❌ Extension didn't connect in %ds", timeout)
-            log.error("   Make sure FlowKit extension is installed and a Flow tab is open")
+            return self._flow_key is not None
+
+    async def _request_flow_tab(self):
+        """Ask extension to open or refresh a Flow tab."""
+        if not self._ws:
+            return
+        try:
+            log.info("📂 Requesting extension to open/refresh Flow tab...")
+            await self._ws.send(json.dumps({"method": "open_flow_tab"}))
+            # Wait for page to fully load before requesting token refresh
+            await asyncio.sleep(8)
+            log.info("🔄 Requesting token refresh from Flow tab...")
+            await self._ws.send(json.dumps({"method": "refresh_flow_tab"}))
+        except Exception as e:
+            log.debug("Failed to request flow tab: %s", e)
+
+    async def health_check(self):
+        """Quick check if extension is ready with valid token."""
+        if not self._ws or not self._flow_key:
+            return False
+        try:
+            req_id = str(uuid.uuid4())
+            future = self._loop.create_future()
+            self._pending[req_id] = future
+            await self._ws.send(json.dumps({
+                "id": req_id,
+                "method": "get_status",
+            }))
+            result = await asyncio.wait_for(future, timeout=5)
+            self._pending.pop(req_id, None)
+            return result.get("result", {}).get("flowKeyPresent", False)
+        except Exception:
+            self._pending.pop(req_id, None)
             return False
 
     async def _on_connect(self, ws):
