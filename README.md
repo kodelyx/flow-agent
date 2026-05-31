@@ -1,13 +1,20 @@
+<div align="center">
+
 # ⚡ Flow Agent
 
-**The ultimate CLI toolkit for Google Flow — Omni Flash video generation + unlimited Nano Banana 2 image generation, all from the terminal.**
+### Generate AI videos & images from your terminal — no API key, no limits.
 
-🎬 **Video** (Omni Flash) — T2V, V2V, I2V with auto watermark removal · uses credits  
-🖼️ **Image** (Nano Banana 2) — T2I, I2I with reference images · **unlimited, no credits needed**
-
-No API key required. Uses your Google account via a Chrome extension bridge.
+**Omni Flash** for cinematic video generation · **Nano Banana 2** for unlimited image creation  
+Auto watermark removal · Reference-based editing · One command, zero setup.
 
 ---
+
+🎬 `T2V` `V2V` `I2V` — Video generation with auto watermark clean *(uses credits)*  
+🖼️ `T2I` `I2I` — Unlimited image generation with reference support *(no credits needed)*  
+🔑 Uses your Google account via Chrome extension — **no API key required**
+
+</div>
+
 
 ## ✅ Features & Status
 
