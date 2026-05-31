@@ -25,6 +25,8 @@ Auto watermark removal · Reference-based editing · One command, zero setup.
 | **V2V** | Edit/restyle existing video | ~3min | ✅ Working |
 | **I2I** | Edit image with reference | ~10-30s | ✅ Working |
 | **I2V** | Animate a still image into video | ~44s | ✅ Working |
+| **FL** | First + Last frame video control | ~44s | ✅ Working |
+| **R2V** | Reference-based video generation | ~44s | ✅ Working |
 | **Upload** | Upload video/image to Flow | ~12s | ✅ Working |
 | **Watermark Remove** | Auto-remove Gemini watermark (~1s) | ~1s | ✅ Auto |
 | **Auto-Retry** | Auto-open/refresh Flow tab for token | auto | ✅ Built-in |
@@ -101,6 +103,15 @@ python -m cli.generate "Dog playing in the park" --duration 6
 
 # Generate multiple variations
 python -m cli.generate "Cyberpunk city at night" --count 4
+
+# I2V — animate a still image
+python -m cli.generate "Character comes alive" --start photo.png
+
+# FL — First + Last frame (controlled transition)
+python -m cli.generate "Person walks forward" --start start.png --end end.png
+
+# R2V — Reference images (character consistency)
+python -m cli.generate "Character in new scene" --ref char1.png char2.png
 ```
 
 **CLI Options:**
@@ -111,6 +122,9 @@ python -m cli.generate "Cyberpunk city at night" --count 4
 | `--duration` | `-d` | `10` | `4`, `6`, `8`, or `10` seconds |
 | `--count` | `-c` | `1` | Generate 1-4 videos |
 | `--edit` | `-e` | - | Pass media_id for V2V edit mode |
+| `--start` | `-s` | - | Start frame image (I2V / FL mode) |
+| `--end` | | - | End frame image (use with --start for FL) |
+| `--ref` | `-r` | - | Reference image(s) for R2V mode |
 | `--no-clean` | | - | Skip auto watermark removal |
 
 ---
