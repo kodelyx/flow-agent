@@ -66,8 +66,8 @@ This document contains standard error scenarios and how to resolve them quickly.
   Always change your directory to the `flow-agent` folder before running commands, or use the absolute paths:
   ```bash
   # Go to the correct directory first
-  cd /Users/akashyadav/Server/Go-Map/N8N-Agent/flow-agent
-
+  cd /path/to/flow-agent
+  
   # Then run the command
   venv/bin/python -m cli.api --port 8000
   ```
