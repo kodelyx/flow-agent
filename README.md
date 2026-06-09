@@ -2,16 +2,17 @@
 
 # ⚡ Flow Agent
 
-### Generate AI videos & images from your terminal — no API key, no limits.
+### Generate AI videos & images via HTTP/HTTPS API Server or CLI — no API key, no limits.
 
 **Omni Flash** for cinematic video generation · **Nano Banana 2** for unlimited image creation  
-Auto watermark removal · Reference-based editing · One command, zero setup.
+FastAPI Integration · Auto watermark removal · Reference-based editing · Zero setup.
 
 ---
 
 🎬 `T2V` `V2V` `I2V` — Video generation with auto watermark clean *(uses credits)*  
 🖼️ `T2I` `I2I` — Unlimited image generation with reference support *(no credits needed)*  
-🔑 Uses your Google account via Chrome extension — **no API key required**
+🔑 Uses your Google account via Chrome extension — **no API key required**  
+🌐 FastAPI HTTP/HTTPS Server — **perfect for n8n & external automation**
 
 </div>
 
