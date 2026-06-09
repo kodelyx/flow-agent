@@ -12,6 +12,9 @@ import logging
 import os
 import cv2
 import numpy as np
+import subprocess
+import json
+import sys
 
 log = logging.getLogger("omniflash.watermark")
 
@@ -65,7 +68,7 @@ def get_alpha_map(size: int) -> np.ndarray:
 
 
 def detect_watermark_config(width: int, height: int, is_video: bool = True):
-    """Detect watermark size and position based on video dimensions."""
+    """Detect watermark size and position based on dimensions."""
     if is_video:
         short_dim = min(width, height)
         if short_dim >= 1080:
@@ -77,14 +80,20 @@ def detect_watermark_config(width: int, height: int, is_video: bool = True):
             margin_right = 72
             margin_bottom = 72
     else:
-        if width > 1024 or height > 1024:
-            logo_size = 96
-            margin_right = 64
-            margin_bottom = 64
-        else:
+        if width == 720 and height == 1280:
             logo_size = 48
-            margin_right = 32
-            margin_bottom = 32
+            margin_right = 72
+            margin_bottom = 72
+        else:
+            short_dim = min(width, height)
+            if short_dim > 800:
+                logo_size = 96
+                margin_right = 64
+                margin_bottom = 64
+            else:
+                logo_size = 48
+                margin_right = 32
+                margin_bottom = 32
 
     x = width - margin_right - logo_size
     y = height - margin_bottom - logo_size
@@ -138,9 +147,92 @@ def remove_watermark_frame(frame: np.ndarray, is_video: bool = True) -> np.ndarr
     return frame
 
 
+def remove_watermark_yuv_frame(frame_bytes: bytes, width: int, height: int, config: dict) -> bytes:
+    """Apply YUV watermark reverse blending directly in raw yuv420p buffer using NumPy."""
+    frame_arr = np.frombuffer(frame_bytes, dtype=np.uint8).copy()
+    
+    y_size = width * height
+    uv_size = (width // 2) * (height // 2)
+    
+    # Reshape planes into 2D views
+    Y = frame_arr[0:y_size].reshape((height, width))
+    U = frame_arr[y_size:y_size + uv_size].reshape((height // 2, width // 2))
+    V = frame_arr[y_size + uv_size:].reshape((height // 2, width // 2))
+    
+    x, y = config["x"], config["y"]
+    size = config["logo_size"]
+    
+    # Align coordinates to even numbers for YUV420p subsampling compatibility
+    x0 = (x // 2) * 2
+    y0 = (y // 2) * 2
+    x1 = ((x + size + 1) // 2) * 2
+    y1 = ((y + size + 1) // 2) * 2
+    
+    # Ensure bounds are within image dimensions (which must also be even)
+    x0 = max(0, min(x0, width))
+    y0 = max(0, min(y0, height))
+    x1 = max(0, min(x1, width))
+    y1 = max(0, min(y1, height))
+    
+    # Intersect aligned bounds with actual watermark bounding box
+    w_x0, w_y0 = x, y
+    w_x1, w_y1 = x + size, y + size
+    
+    int_x0 = max(x0, w_x0)
+    int_y0 = max(y0, w_y0)
+    int_x1 = min(x1, w_x1)
+    int_y1 = min(y1, w_y1)
+    
+    # Create target alpha map for coordinate-aligned region
+    alpha_map_full = np.zeros((y1 - y0, x1 - x0), dtype=np.float32)
+    
+    if int_x1 > int_x0 and int_y1 > int_y0:
+        src_x0 = int_x0 - w_x0
+        src_y0 = int_y0 - w_y0
+        src_x1 = int_x1 - w_x0
+        src_y1 = int_y1 - w_y0
+        
+        dst_x0 = int_x0 - x0
+        dst_y0 = int_y0 - y0
+        dst_x1 = int_x1 - x0
+        dst_y1 = int_y1 - y0
+        
+        alpha_map_full[dst_y0:dst_y1, dst_x0:dst_x1] = get_alpha_map(size)[src_y0:src_y1, src_x0:src_x1]
+        
+    scaled_alpha = alpha_map_full * VIDEO_ALPHA_SCALE
+    scaled_alpha = np.clip(scaled_alpha, 0, MAX_ALPHA)
+    one_minus_alpha = 1.0 - scaled_alpha
+    mask = alpha_map_full >= ALPHA_THRESHOLD
+    
+    # 1. Process Y channel (Luminance)
+    Y_roi = Y[y0:y1, x0:x1].astype(np.float32)
+    new_Y = (Y_roi - scaled_alpha * 235.0) / one_minus_alpha
+    Y[y0:y1, x0:x1] = np.where(mask, np.clip(new_Y, 0, 255).astype(np.uint8), Y[y0:y1, x0:x1])
+    
+    # 2. Process U & V channels (Chroma, subsampled 2x2)
+    x0_sub, y0_sub = x0 // 2, y0 // 2
+    x1_sub, y1_sub = x1 // 2, y1 // 2
+    
+    scaled_alpha_sub = scaled_alpha[::2, ::2]
+    one_minus_alpha_sub = one_minus_alpha[::2, ::2]
+    mask_sub = mask[::2, ::2]
+    
+    # U Channel
+    U_roi = U[y0_sub:y1_sub, x0_sub:x1_sub].astype(np.float32)
+    new_U = (U_roi - 128.0) / one_minus_alpha_sub + 128.0
+    U[y0_sub:y1_sub, x0_sub:x1_sub] = np.where(mask_sub, np.clip(new_U, 0, 255).astype(np.uint8), U[y0_sub:y1_sub, x0_sub:x1_sub])
+    
+    # V Channel
+    V_roi = V[y0_sub:y1_sub, x0_sub:x1_sub].astype(np.float32)
+    new_V = (V_roi - 128.0) / one_minus_alpha_sub + 128.0
+    V[y0_sub:y1_sub, x0_sub:x1_sub] = np.where(mask_sub, np.clip(new_V, 0, 255).astype(np.uint8), V[y0_sub:y1_sub, x0_sub:x1_sub])
+    
+    return frame_arr.tobytes()
+
+
 def remove_watermark_video(input_path: str, output_path: str = None, 
                             show_progress: bool = True) -> str:
-    """Remove watermark from a video file using ffmpeg for I/O.
+    """Remove watermark from a video file using ffmpeg YUV420p pipes.
     
     Args:
         input_path: Path to input video file
@@ -150,65 +242,81 @@ def remove_watermark_video(input_path: str, output_path: str = None,
     Returns:
         Path to cleaned video file
     """
-    import subprocess
-    import struct
-    
     input_path = str(input_path)
     if output_path is None:
         base, ext = os.path.splitext(input_path)
         output_path = f"{base}_clean{ext}"
+        
+    abs_input = os.path.abspath(input_path)
+    abs_output = os.path.abspath(output_path)
     
     # Get video info via ffprobe
     probe = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", "-show_format", input_path],
+        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", "-show_format", abs_input],
         capture_output=True, text=True
     )
-    import json
     info = json.loads(probe.stdout)
     
     video_stream = next(s for s in info["streams"] if s["codec_type"] == "video")
     width = int(video_stream["width"])
     height = int(video_stream["height"])
     
-    # Parse fps (could be "24/1" or "23.976")
+    # Parse fps
     fps_str = video_stream.get("r_frame_rate", "24/1")
     if "/" in fps_str:
         num, den = fps_str.split("/")
         fps = float(num) / float(den)
     else:
         fps = float(fps_str)
-    
+        
     duration = float(info.get("format", {}).get("duration", 0))
     total_frames = int(duration * fps) if duration > 0 else 0
     
-    log.info("🎬 Processing video: %dx%d @ %.1f fps (%d frames)", width, height, fps, total_frames)
+    log.info("🎬 Processing YUV video: %dx%d @ %.1f fps (%d frames)", width, height, fps, total_frames)
     
-    # ffmpeg: decode → raw frames (BGR24)
-    read_cmd = [
-        "ffmpeg", "-i", input_path,
-        "-f", "rawvideo", "-pix_fmt", "bgr24",
-        "-v", "quiet", "-"
-    ]
+    config = detect_watermark_config(width, height, is_video=True)
     
-    # ffmpeg: encode ← raw frames
+    # Temp file for safe rewrite
+    temp_out = abs_output + ".tmp.mp4"
+    if os.path.exists(temp_out):
+        os.remove(temp_out)
+        
+    # Dynamic macOS Hardware Acceleration vs standard CPU fallback
+    if sys.platform == "darwin":
+        read_cmd = [
+            "ffmpeg", "-hwaccel", "videotoolbox", "-i", abs_input,
+            "-f", "rawvideo", "-pix_fmt", "yuv420p",
+            "-v", "quiet", "-"
+        ]
+        encoder_args = ["-c:v", "h264_videotoolbox", "-b:v", "4000k"]
+    else:
+        read_cmd = [
+            "ffmpeg", "-i", abs_input,
+            "-f", "rawvideo", "-pix_fmt", "yuv420p",
+            "-v", "quiet", "-"
+        ]
+        encoder_args = ["-c:v", "libx264", "-preset", "fast", "-crf", "18"]
+        
     write_cmd = [
         "ffmpeg", "-y",
-        "-f", "rawvideo", "-pix_fmt", "bgr24",
-        "-s", f"{width}x{height}", "-r", str(fps),
+        "-f", "rawvideo", "-pix_fmt", "yuv420p",
+        "-s", f"{width}x{height}", "-r", str(fps_str),
         "-i", "-",
-        "-i", input_path,   # re-read for audio
+        "-i", abs_input,
         "-map", "0:v", "-map", "1:a?",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+    ] + encoder_args + [
         "-c:a", "copy",
         "-movflags", "+faststart",
         "-v", "quiet",
-        output_path
+        temp_out
     ]
     
     reader = subprocess.Popen(read_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     writer = subprocess.Popen(write_cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
     
-    frame_size = width * height * 3  # BGR24
+    y_size = width * height
+    uv_size = (width // 2) * (height // 2)
+    frame_size = y_size + 2 * uv_size
     frame_count = 0
     
     try:
@@ -216,15 +324,9 @@ def remove_watermark_video(input_path: str, output_path: str = None,
             raw = reader.stdout.read(frame_size)
             if len(raw) < frame_size:
                 break
-            
-            # Convert raw bytes to numpy array
-            frame = np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3)).copy()
-            
-            # Remove watermark
-            clean_frame = remove_watermark_frame(frame, is_video=True)
-            
-            # Write cleaned frame
-            writer.stdin.write(clean_frame.tobytes())
+                
+            clean_raw = remove_watermark_yuv_frame(raw, width, height, config)
+            writer.stdin.write(clean_raw)
             
             frame_count += 1
             if show_progress and frame_count % 30 == 0:
@@ -234,11 +336,17 @@ def remove_watermark_video(input_path: str, output_path: str = None,
         writer.stdin.close()
         writer.wait()
         reader.wait()
-    
-    size_mb = os.path.getsize(output_path) / (1024 * 1024)
-    log.info("✅ Watermark removed: %s (%.1f MB, %d frames)", output_path, size_mb, frame_count)
-    
-    return output_path
+        
+    if os.path.exists(temp_out):
+        if os.path.exists(abs_output):
+            os.remove(abs_output)
+        os.rename(temp_out, abs_output)
+    else:
+        raise RuntimeError("Failed to compile clean watermark-free video")
+        
+    size_mb = os.path.getsize(abs_output) / (1024 * 1024)
+    log.info("✅ Watermark removed: %s (%.1f MB, %d frames)", abs_output, size_mb, frame_count)
+    return abs_output
 
 
 def remove_watermark_image(input_path: str, output_path: str = None) -> str:

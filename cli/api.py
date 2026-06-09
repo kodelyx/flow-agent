@@ -39,7 +39,16 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTPUT_DIR = os.path.join(ROOT_DIR, "output")
 TEMP_DIR = os.path.join(OUTPUT_DIR, ".temp")
-os.makedirs(TEMP_DIR, exist_ok=True)
+
+def ensure_temp_dir():
+    os.makedirs(TEMP_DIR, exist_ok=True)
+
+def cleanup_temp_dir():
+    try:
+        if os.path.exists(TEMP_DIR) and not os.listdir(TEMP_DIR):
+            os.rmdir(TEMP_DIR)
+    except Exception:
+        pass
 
 # Global ExtensionBridge instance
 bridge: Optional[ExtensionBridge] = None
@@ -59,6 +68,7 @@ async def lifespan(app: FastAPI):
     log.info("🔌 Closing Flow Agent Extension Bridge...")
     if bridge:
         await bridge.close()
+    cleanup_temp_dir()
 
 app = FastAPI(
     title="Flow Agent API",
@@ -110,6 +120,7 @@ async def resolve_image_input(active_bridge: ExtensionBridge, path_or_id_or_b64:
             
             img_bytes = base64.b64decode(base64_data)
             temp_filename = f"b64_{uuid.uuid4().hex}.png"
+            ensure_temp_dir()
             temp_path = os.path.join(TEMP_DIR, temp_filename)
             with open(temp_path, "wb") as f:
                 f.write(img_bytes)
@@ -119,6 +130,7 @@ async def resolve_image_input(active_bridge: ExtensionBridge, path_or_id_or_b64:
                 os.remove(temp_path)
             except OSError:
                 pass
+            cleanup_temp_dir()
             
             if not mid:
                 raise HTTPException(status_code=400, detail="Failed to upload base64 image reference")
@@ -200,6 +212,7 @@ async def api_upload_image(
     temp_path = None
     if file:
         temp_filename = f"upload_{uuid.uuid4().hex}_{file.filename}"
+        ensure_temp_dir()
         temp_path = os.path.join(TEMP_DIR, temp_filename)
         with open(temp_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
@@ -222,6 +235,7 @@ async def api_upload_image(
                 os.remove(temp_path)
             except OSError:
                 pass
+        cleanup_temp_dir()
 
 
 @app.post("/upload/video")
@@ -236,6 +250,7 @@ async def api_upload_video(
     temp_path = None
     if file:
         temp_filename = f"upload_{uuid.uuid4().hex}_{file.filename}"
+        ensure_temp_dir()
         temp_path = os.path.join(TEMP_DIR, temp_filename)
         with open(temp_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
@@ -262,6 +277,7 @@ async def api_upload_video(
                 os.remove(temp_path)
             except OSError:
                 pass
+        cleanup_temp_dir()
 
 
 @app.post("/generate/video")
@@ -332,6 +348,7 @@ async def api_generate_video(req: VideoGenerationRequest, download: bool = Query
         unique_id = uuid.uuid4().hex[:6]
         filename = f"omni_{timestamp}_{unique_id}_{i+1}.mp4"
         out_path = os.path.join(OUTPUT_DIR, filename)
+        ensure_temp_dir()
         temp_path = os.path.join(TEMP_DIR, filename)
         
         if await download_video(active_bridge, media_id, temp_path):
@@ -356,6 +373,7 @@ async def api_generate_video(req: VideoGenerationRequest, download: bool = Query
                 "download_url": f"/download/{filename}"
             })
             
+    cleanup_temp_dir()
     if not outputs:
         raise HTTPException(status_code=500, detail="Failed to download generated video(s)")
         
@@ -460,6 +478,7 @@ async def api_edit_video(req: VideoEditRequest):
         unique_id = uuid.uuid4().hex[:6]
         filename = f"edit_{timestamp}_{unique_id}_{i+1}.mp4"
         out_path = os.path.join(OUTPUT_DIR, filename)
+        ensure_temp_dir()
         temp_path = os.path.join(TEMP_DIR, filename)
         
         if await download_video(active_bridge, media_id, temp_path):
@@ -482,6 +501,7 @@ async def api_edit_video(req: VideoEditRequest):
                 "download_url": f"/download/{filename}"
             })
             
+    cleanup_temp_dir()
     if not outputs:
         raise HTTPException(status_code=500, detail="Failed to download edited video(s)")
         

@@ -14,6 +14,17 @@ import os
 import sys
 import time
 
+# Add virtual environment site-packages to sys.path to run with system python
+venv_site_packages = os.path.join(os.path.dirname(os.path.abspath(__file__)), "venv", "lib", "python3.14", "site-packages")
+if os.path.exists(venv_site_packages):
+    sys.path.insert(0, venv_site_packages)
+
+# Clear proxy environment variables to bypass sandbox proxy for local requests
+os.environ.pop("HTTP_PROXY", None)
+os.environ.pop("HTTPS_PROXY", None)
+os.environ.pop("http_proxy", None)
+os.environ.pop("https_proxy", None)
+
 # Auto-install requests if not present
 try:
     import requests
@@ -144,6 +155,41 @@ def generate_image_i2i(image_media_id):
     print(f"✅ Saved I2I image to {local_i2i_path}")
     return local_i2i_path
 
+def generate_video_t2v():
+    log_step("Text-to-Video (T2V) Generation")
+    payload = {
+        "prompt": "a beautiful golden retriever playing in a park, high quality, 8k, cinematic lighting",
+        "aspect": "portrait",
+        "duration": 4,
+        "count": 1
+    }
+    r = requests.post(f"{API_URL}/generate/video", json=payload)
+    print(f"Status Code: {r.status_code}")
+    print(f"Response: {r.text}")
+    
+    if r.status_code != 200:
+        print("❌ T2V video generation failed!")
+        sys.exit(1)
+        
+    data = r.json()
+    outputs = data.get("outputs", [])
+    if not outputs:
+        print("❌ No outputs returned in T2V video generation!")
+        sys.exit(1)
+        
+    video_info = outputs[0]
+    download_url = video_info.get("download_url")
+    
+    local_video_path = os.path.join("output", "test_t2v.mp4")
+    
+    print(f"📥 Downloading video from {API_URL}{download_url}...")
+    video_r = requests.get(f"{API_URL}{download_url}")
+    with open(local_video_path, "wb") as f:
+        f.write(video_r.content)
+        
+    print(f"✅ Saved T2V video to {local_video_path}")
+    return local_video_path
+
 def generate_video_i2v(image_media_id):
     log_step("Image-to-Video (I2V) Generation")
     payload = {
@@ -246,6 +292,9 @@ def main():
     
     # 2. Text to Image (T2I)
     local_image = generate_image()
+    
+    # 2b. Text to Video (T2V)
+    local_t2v_video = generate_video_t2v()
     
     # 3. Upload Image to GCS/Flow
     image_media_id = upload_image(local_image)
