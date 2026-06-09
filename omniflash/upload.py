@@ -86,7 +86,7 @@ async def upload_video(video_path: str, project_id: str = DEFAULT_PROJECT_ID,
     # Step 2: PUT via curl
     log.info("Uploading %d bytes via curl...", video_size)
     proc = subprocess.run([
-        "curl", "-s", "-X", "PUT", session_url,
+        "curl", "-X", "PUT", session_url,
         "-H", "Content-Type: video/mp4",
         "-H", f"Authorization: Bearer {auth_token}",
         "-H", "X-Goog-Upload-Command: upload, finalize",

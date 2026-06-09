@@ -3,3 +3,10 @@ dragon_end.png : 9f7ee671-62cf-4380-8896-38a1cc0ce943
 dragon_start.png : 76690529-192b-42ee-b6d5-ebc003ec7467
 end_frame.png : dfa0816c-dfc5-41bd-bbbf-0ef865a377de
 start_frame.png : 41f43cdb-293f-4e41-8bb2-664fd269619b
+upload_08eb0364414643f9bede2b4e139375d9_test_t2i.png : a821e119-ebdb-419d-8991-f80ecfa63637
+upload_125349fc756b4e6f8ead3b2a9d6aa036_test_i2v.mp4 : 84e699af-72ba-45db-9a0e-ea60cda3420b
+upload_55a0bcc69fa74bf4a85790a23ba0e92a_test_t2i.png : e6dcaab9-266f-4dd1-bf04-63bf8cd5a27b
+upload_6fb7eab112a04007b7468ce3b4a7c5d9_test_t2i.png : 0e61aa50-fc25-4c58-95ff-ea2587e66265
+upload_c0e77a6605844f5d93182e9fc6aaaa5e_test_i2v.mp4 : 9f598bab-5f73-403d-b679-7cd223f42523
+upload_cd9aed3690464e06953eb74c5b254619_test_t2i.png : a2ef1c23-c2bb-42a9-8cd2-03264a754623
+upload_ce5bb751ddeb461c9392c617af058186_test_i2v.mp4 : 8eb1f60d-0f6a-44b3-835d-8f268c565818
