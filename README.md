@@ -273,6 +273,44 @@ See [SNIFFING.md](SNIFFING.md) for the full API discovery guide.
 
 ---
 
+## 🌐 HTTP/HTTPS API Server (for n8n & external integrations)
+
+A FastAPI-based API server is included to trigger all Flow Agent features remotely (e.g., from n8n HTTP Request nodes, custom webhooks, or automation workflows).
+
+### Start the API Server
+
+Run the server from the project directory:
+```bash
+# Standard HTTP (defaults to port 8000)
+venv/bin/python -m cli.api --host 0.0.0.0 --port 8000
+
+# Optional HTTPS (auto-generates self-signed SSL certificates)
+venv/bin/python -m cli.api --host 0.0.0.0 --port 8443 --ssl
+```
+
+### Core API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| **GET** | `/health` | Check Extension Bridge health and token status. |
+| **POST** | `/generate/video` | T2V, I2V, FL, R2V video generation. Supports query `?download=true` to stream the binary `.mp4` file. |
+| **POST** | `/generate/image` | T2I, I2I image generation. Supports `?download=true` to stream the binary `.png` file. |
+| **POST** | `/upload/image` | Upload an image to Flow (via file upload or local file path). |
+| **POST** | `/upload/video` | Upload a video to Flow (via file upload or local file path). |
+| **POST** | `/edit/video` | V2V video editing (restyling segment duration). |
+| **GET** | `/download/{filename}` | Download generated image/video files from the `output/` folder. |
+
+### Verify with Integration Tests
+
+A comprehensive integration test script is provided to verify all endpoints:
+```bash
+venv/bin/python test_api.py
+```
+
+See [error.md](error.md) for detailed troubleshooting instructions if you encounter port conflicts or proxy network issues.
+
+---
+
 ## 🐍 Python API (for developers)
 
 Use the `omniflash` package directly in your own scripts:
