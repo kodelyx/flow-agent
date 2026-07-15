@@ -15,26 +15,26 @@
     }
 
     :root {
-      --bg: #f5f4f8;
-      --surface: #ffffff;
-      --card: rgba(255, 255, 255, 0.85);
-      --card-hover: rgba(255, 255, 255, 0.95);
-      --border: rgba(0, 0, 0, 0.06);
-      --border-glow: rgba(255, 55, 95, 0.2);
+      --bg: #0e1016;
+      --surface: #161922;
+      --card: rgba(255, 255, 255, 0.04);
+      --card-hover: rgba(255, 255, 255, 0.08);
+      --border: rgba(255, 255, 255, 0.09);
+      --border-glow: rgba(255, 55, 95, 0.3);
       --accent: #ff375f;
       --accent-soft: #ff5e82;
       --accent-bg: rgba(255, 55, 95, 0.06);
       --accent-glow: rgba(255, 55, 95, 0.25);
       --green: #34c759;
-      --green-bg: rgba(52, 199, 89, 0.1);
+      --green-bg: rgba(52, 199, 89, 0.14);
       --red: #ff3b30;
-      --red-bg: rgba(255, 59, 48, 0.1);
+      --red-bg: rgba(255, 59, 48, 0.14);
       --yellow: #ffcc00;
-      --yellow-bg: rgba(255, 204, 0, 0.1);
+      --yellow-bg: rgba(255, 204, 0, 0.14);
       --cyan: #ff375f;
-      --text: #0f172a;
-      --text-dim: #475569;
-      --muted: #94a3b8;
+      --text: #e8eaed;
+      --text-dim: #a8b0bd;
+      --muted: #6b7385;
       --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
       --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
       --radius: 12px;
@@ -66,7 +66,7 @@
       align-items: center;
       gap: 10px;
       padding: 14px 16px 12px;
-      background: linear-gradient(180deg, rgba(255, 55, 95, 0.04) 0%, var(--surface) 100%);
+      background: linear-gradient(180deg, rgba(255, 55, 95, 0.06) 0%, var(--surface) 100%);
       border-bottom: 1px solid var(--border);
       position: relative;
     }
@@ -79,6 +79,10 @@
       right: 16px;
       height: 1px;
       background: linear-gradient(90deg, transparent, var(--accent-glow), transparent);
+    }
+
+    header img {
+      mix-blend-mode: normal !important;
     }
 
     .logo {
@@ -113,15 +117,22 @@
       letter-spacing: 0.03em;
     }
 
-    /* Connection indicator */
+    /* Connection dot */
+    #conn-pill {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 5px;
+      flex-shrink: 0;
+    }
+
     #conn-dot {
-      width: 10px;
-      height: 10px;
+      width: 9px;
+      height: 9px;
       border-radius: 50%;
-      background: var(--red);
+      background: var(--muted);
       transition: all 0.4s ease;
       flex-shrink: 0;
-      position: relative;
     }
 
     #conn-dot.on {
@@ -233,6 +244,11 @@
       color: var(--text);
       margin-bottom: 4px;
       font-variant-numeric: tabular-nums;
+      transition: transform 0.18s ease;
+    }
+
+    .metric-value.bump {
+      transform: scale(1.18);
     }
 
     .metric-value.green {
@@ -251,55 +267,136 @@
       color: var(--muted);
     }
 
-    /* ── State bar ─────────────────────────────────── */
-    .state-bar {
+    /* ── Activity strip ─────────────────────────────── */
+    #activity {
+      padding: 10px 16px 12px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .activity-top {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 8px 16px;
+      margin-bottom: 8px;
+    }
+
+    #activity-orb {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+    }
+
+    #activity-state {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: var(--text);
+    }
+
+    #activity-ticker {
+      margin-left: auto;
+      font-size: 10px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+    }
+
+    .activity-bar {
+      position: relative;
+      height: 6px;
+      border-radius: 3px;
+      background: var(--border);
+      overflow: hidden;
+    }
+
+    .activity-fill {
+      position: absolute;
+      inset: 0;
+      border-radius: 3px;
+      background: transparent;
+    }
+
+    /* OFF — dead, no motion */
+    #activity[data-state="off"] #activity-orb {
+      background: var(--muted);
+    }
+
+    #activity[data-state="off"] .activity-fill {
+      background: transparent;
+    }
+
+    /* IDLE — calm green breathing */
+    #activity[data-state="idle"] #activity-orb {
+      background: var(--green);
+      animation: orb-breathe 2.6s ease-in-out infinite;
+    }
+
+    #activity[data-state="idle"] .activity-fill {
+      background: linear-gradient(90deg, transparent, var(--green), transparent);
+      animation: breathe 3s ease-in-out infinite;
+    }
+
+    /* RUNNING — energetic accent scan */
+    #activity[data-state="running"] #activity-orb {
+      background: var(--accent);
+      animation: orb-breathe 0.9s ease-in-out infinite;
+    }
+
+    #activity[data-state="running"] .activity-fill {
+      width: 35%;
+      background: linear-gradient(90deg, transparent, var(--accent), var(--accent-soft), transparent);
+      animation: scan 1.1s linear infinite;
+    }
+
+    @keyframes breathe {
+
+      0%,
+      100% {
+        opacity: 0.25;
+      }
+
+      50% {
+        opacity: 0.8;
+      }
+    }
+
+    @keyframes orb-breathe {
+
+      0%,
+      100% {
+        opacity: 1;
+        box-shadow: 0 0 0 0 rgba(255, 55, 95, 0.35);
+      }
+
+      50% {
+        opacity: 0.55;
+        box-shadow: 0 0 10px 3px rgba(255, 55, 95, 0.18);
+      }
+    }
+
+    @keyframes scan {
+      from {
+        transform: translateX(-120%);
+      }
+
+      to {
+        transform: translateX(320%);
+      }
+    }
+
+    /* ── Token line ─────────────────────────────────── */
+    .token-line {
+      display: flex;
+      align-items: center;
+      padding: 7px 16px;
       background: var(--surface);
       border-bottom: 1px solid var(--border);
-      font-size: 11px;
-      color: var(--muted);
-      font-weight: 500;
-    }
-
-    .state-label {
-      font-size: 9px;
-      font-weight: 600;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-
-    #state-badge {
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 9px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      background: var(--border);
-      color: var(--muted);
-    }
-
-    #state-badge.idle {
-      background: var(--green-bg);
-      color: var(--green);
-    }
-
-    #state-badge.running {
-      background: var(--yellow-bg);
-      color: var(--yellow);
-    }
-
-    #state-badge.off {
-      background: var(--border);
-      color: var(--muted);
     }
 
     #token-status {
-      margin-left: auto;
       font-size: 10px;
       font-weight: 600;
       display: flex;
@@ -361,6 +458,12 @@
       border-bottom: 1px solid var(--border);
     }
 
+    .log-header-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
     #log-count {
       background: var(--accent-bg);
       border: 1px solid rgba(255, 55, 95, 0.15);
@@ -369,6 +472,46 @@
       font-size: 10px;
       font-weight: 700;
       color: var(--accent-soft);
+    }
+
+    .live-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border-radius: 10px;
+      padding: 1px 8px;
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #fff;
+      background: linear-gradient(135deg, var(--accent), var(--accent-soft));
+      box-shadow: 0 0 0 0 var(--accent-glow);
+      animation: pill-pulse 1.2s ease-in-out infinite;
+    }
+
+    .live-pill[hidden] {
+      display: none;
+    }
+
+    .live-pill::before {
+      content: '';
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #fff;
+    }
+
+    @keyframes pill-pulse {
+
+      0%,
+      100% {
+        box-shadow: 0 0 0 0 rgba(255, 55, 95, 0.4);
+      }
+
+      50% {
+        box-shadow: 0 0 8px 3px rgba(255, 55, 95, 0.15);
+      }
     }
 
     .log-table-wrap {
@@ -494,6 +637,46 @@
       color: var(--yellow);
     }
 
+    tbody tr.inflight {
+      position: relative;
+      background: var(--accent-bg);
+    }
+
+    tbody tr.inflight::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(90deg, transparent, rgba(255, 55, 95, 0.12), transparent);
+      animation: row-shimmer 1.4s linear infinite;
+    }
+
+    tbody tr.inflight .badge-proc {
+      animation: badge-blink 1s ease-in-out infinite;
+    }
+
+    @keyframes row-shimmer {
+      from {
+        transform: translateX(-100%);
+      }
+
+      to {
+        transform: translateX(100%);
+      }
+    }
+
+    @keyframes badge-blink {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.45;
+      }
+    }
+
     .td-error {
       max-width: 120px;
       overflow: hidden;
@@ -520,7 +703,7 @@
       display: block;
       font-size: 24px;
       margin-bottom: 8px;
-      opacity: 0.4;
+      opacity: 0.6;
     }
 
     /* ── Detail overlay ─────────────────────────── */
@@ -528,7 +711,7 @@
       display: none;
       position: fixed;
       inset: 0;
-      background: rgba(15, 23, 42, 0.3);
+      background: rgba(0, 0, 0, 0.55);
       backdrop-filter: blur(4px);
       z-index: 100;
     }
@@ -559,7 +742,7 @@
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
     }
 
     .detail-header {
@@ -672,6 +855,12 @@
       opacity: 0.8;
     }
 
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: default;
+      transform: none;
+    }
+
     .btn-primary {
       background: linear-gradient(135deg, var(--accent), var(--accent-soft));
       border-color: transparent;
@@ -732,6 +921,91 @@
     .metric-card:nth-child(3) {
       animation-delay: 0.1s;
     }
+
+    /* ── Toasts ──────────────────────────────────── */
+    #toast-wrap {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      z-index: 200;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      pointer-events: none;
+    }
+
+    .toast {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 12px;
+      border-radius: 8px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text);
+      animation: toast-in 0.22s ease;
+    }
+
+    .toast.hide {
+      animation: toast-out 0.2s ease forwards;
+    }
+
+    .toast::before {
+      content: '';
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--muted);
+    }
+
+    .toast.ok::before {
+      background: var(--green);
+    }
+
+    .toast.err::before {
+      background: var(--red);
+    }
+
+    .toast.info::before {
+      background: var(--accent);
+    }
+
+    @keyframes toast-in {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes toast-out {
+      to {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+    }
+
+    /* ── Reduced motion ──────────────────────────── */
+    @media (prefers-reduced-motion: reduce) {
+
+      .activity-fill,
+      #activity-orb,
+      #conn-dot.on,
+      .live-pill,
+      tbody tr.inflight::after,
+      tbody tr.inflight .badge-proc {
+        animation: none !important;
+      }
+    }
   </style>
 </head>
 
@@ -740,13 +1014,15 @@
   <!-- Header -->
   <header>
     <div style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; overflow: visible; flex-shrink: 0; margin-right: 4px;">
-      <img src="icon48.png" style="width: 100%; height: 100%; object-fit: contain; transform: scale(1.6); mix-blend-mode: multiply;">
+      <img src="icon48.png" style="width: 100%; height: 100%; object-fit: contain; transform: scale(1.6);">
     </div>
     <div class="header-info">
       <div class="header-title">Flow Agent</div>
-      <div class="header-sub">AI Video Automation Agent</div>
+      <div class="header-sub">Generate images &amp; videos on autopilot</div>
     </div>
-    <div id="conn-dot"></div>
+    <div id="conn-pill" title="Connection">
+      <span id="conn-dot"></span>
+    </div>
     <div class="toggle-wrap">
       <span class="toggle-label" id="toggle-label">OFF</span>
       <label class="toggle">
@@ -773,17 +1049,31 @@
     </div>
   </div>
 
-  <!-- State bar -->
-  <div class="state-bar">
-    <span class="state-label">State</span>
-    <span id="state-badge" class="off">off</span>
+  <!-- Activity strip -->
+  <section id="activity" data-state="off">
+    <div class="activity-top">
+      <span id="activity-orb"></span>
+      <span id="activity-state">Off</span>
+      <span id="activity-ticker"></span>
+    </div>
+    <div class="activity-bar">
+      <span class="activity-fill"></span>
+    </div>
+  </section>
+
+  <!-- Token line -->
+  <div class="token-line">
     <span id="token-status" class="bad">no token</span>
   </div>
 
   <!-- Request log -->
   <div class="log-section">
     <div class="log-header">
-      Request Log
+      <span>Request Log</span>
+      <span class="log-header-right">
+        <span id="live-count" class="live-pill" hidden>0 live</span>
+        <span id="log-count">0</span>
+      </span>
     </div>
 
     <div class="log-table-wrap">
@@ -831,6 +1121,9 @@
       <div class="detail-body" id="detail-body"></div>
     </div>
   </div>
+
+  <!-- Toasts -->
+  <div id="toast-wrap"></div>
 
   <script src="side_panel.js"></script>
 </body>
