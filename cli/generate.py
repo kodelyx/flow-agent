@@ -99,7 +99,6 @@ async def run(args):
         temp_path = os.path.join(temp_dir, os.path.basename(out_path))
 
         if await download_video(bridge, media_id, temp_path):
-            # Watermark removal disabled — save the raw downloaded video as-is.
             os.replace(temp_path, out_path)
 
             # Cleanup empty .temp dir
@@ -129,8 +128,6 @@ def main():
     parser.add_argument("--ref", "-r", nargs="+", metavar="IMAGE",
                         help="Reference images for R2V mode")
     parser.add_argument("--project-id", "-p", default=DEFAULT_PROJECT)
-    parser.add_argument("--no-clean", action="store_true",
-                        help="Skip automatic watermark removal")
     args = parser.parse_args()
     asyncio.run(run(args))
 

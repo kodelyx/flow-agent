@@ -115,7 +115,6 @@ async def edit_segment(bridge, prompt, aspect, project_id, media_id,
     temp_path = os.path.join(temp_dir, f"segment_{segment_num:03d}.mp4")
 
     if await download_video(bridge, result_media_id, temp_path):
-        # Watermark removal disabled — save the raw downloaded segment as-is.
         os.replace(temp_path, out_path)
         # Cleanup empty .temp dir
         try:
