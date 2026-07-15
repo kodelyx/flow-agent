@@ -1,0 +1,5 @@
+websockets>=12.0
+fastapi>=0.100.0
+uvicorn>=0.22.0
+python-multipart>=0.0.6
+cryptography>=42.0      # lazy-imported in cli/api.py for self-signed cert generation

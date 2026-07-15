@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flow-agent"
+version = "1.0.0"
+description = "Programmable, OpenAI-compatible image & video generation on top of Google Flow, with an MCP server."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "websockets>=12.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+    "python-multipart>=0.0.6",
+    "cryptography>=42.0",
+]
+
+[project.scripts]
+flow = "flow_cli.main:main"
+flow-mcp = "flow_mcp_server:main"
+
+[tool.setuptools]
+py-modules = ["flow_mcp_server"]
+
+[tool.setuptools.packages.find]
+include = ["flow_cli*", "cli*", "omniflash*"]
