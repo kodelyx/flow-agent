@@ -4,10 +4,14 @@ All constants hardcoded. No external config files needed.
 """
 
 import os
+import sys
 
 # ─── Paths ───────────────────────────────────────────────────
 
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if getattr(sys, 'frozen', False):
+    ROOT_DIR = os.path.dirname(sys.executable)
+else:
+    ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MEDIA_ID_FILE = os.path.join(ROOT_DIR, "media-id.js")
 
 # Load settings from config.env (all settings live there; no secrets).

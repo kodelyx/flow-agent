@@ -9,7 +9,10 @@ import urllib.error
 # Load config.env so this MCP process sees the same ports/settings as the
 # backend, even when launched standalone by an AI client.
 def _load_env_files():
-    root = os.path.dirname(os.path.abspath(__file__))
+    if getattr(sys, 'frozen', False):
+        root = os.path.dirname(sys.executable)
+    else:
+        root = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(root, "config.env")
     if not os.path.exists(path):
         return

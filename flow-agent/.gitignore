@@ -1,0 +1,16 @@
+# Runtime data (regenerated at runtime)
+media-id.js
+output/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# macOS
+.DS_Store
