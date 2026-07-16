@@ -32,12 +32,29 @@ If you prefer to install it from source or use it as a standard Python tool:
 uv tool install git+https://github.com/kodelyx/flow-agent
 ```
 
-### Auto-start Script (macOS only)
-On a Mac, you can run the included setup script to install via `uv` and configure it to auto-start on login:
+### Auto-start Setup (macOS / Linux / Windows)
+You can configure the backend to start automatically on every login.
+
+#### macOS & Linux
+In the `flow-agent/` directory, run:
 ```bash
 ./setup.sh
 ```
-To turn off auto-start later: `./uninstall.sh`.
+This will set up a LaunchAgent (macOS) or a systemd user service (Linux) to auto-start and keep the backend alive. To disable:
+```bash
+./uninstall.sh
+```
+
+#### Windows
+Open PowerShell in the `flow-agent/` directory and run:
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force
+.\setup-windows.ps1
+```
+This creates a startup shortcut in your Windows Startup folder. To disable:
+```powershell
+.\uninstall-windows.ps1
+```
 
 ---
 

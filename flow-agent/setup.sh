@@ -49,14 +49,15 @@ fi
 FLOW_MCP_BIN="$(dirname "$FLOW_BIN")/flow-mcp"
 say "flow  → $FLOW_BIN"
 
-# ---- 2. Auto-start on login (LaunchAgent) -------------------------------
+# ---- 2. Auto-start on login ---------------------------------------------
 step "2/2  Setting up auto-start on login"
-mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
 
-# Unload any previous version so we can rewrite cleanly
-launchctl unload "$PLIST" >/dev/null 2>&1 || true
+OS="$(uname -s)"
+if [ "$OS" = "Darwin" ]; then
+  mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+  launchctl unload "$PLIST" >/dev/null 2>&1 || true
 
-cat > "$PLIST" <<PLISTEOF
+  cat > "$PLIST" <<PLISTEOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -87,9 +88,38 @@ cat > "$PLIST" <<PLISTEOF
 </plist>
 PLISTEOF
 
-launchctl load "$PLIST"
-say "Backend will now start automatically on every login"
-say "Logs → $LOG"
+  launchctl load "$PLIST"
+  say "Backend will now start automatically on every login (LaunchAgent)"
+  say "Logs → $LOG"
+elif [ "$OS" = "Linux" ]; then
+  SYSTEMD_DIR="$HOME/.config/systemd/user"
+  mkdir -p "$SYSTEMD_DIR"
+  SERVICE_FILE="$SYSTEMD_DIR/flow-agent.service"
+
+  cat > "$SERVICE_FILE" <<EOF
+[Unit]
+Description=Flow Agent Service
+After=network.target
+
+[Service]
+ExecStart=${FLOW_BIN} serve
+WorkingDirectory=${HERE}
+Restart=always
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+EOF
+
+  systemctl --user daemon-reload
+  systemctl --user enable flow-agent.service
+  systemctl --user restart flow-agent.service
+  say "Backend will now start automatically on every login (systemd)"
+  say "Logs → Run 'journalctl --user -u flow-agent -f'"
+else
+  warn "Auto-start not supported on this OS: $OS. Run 'flow serve' manually."
+fi
 
 # ---- Done ---------------------------------------------------------------
 printf "\n%s\n" "${BOLD}${GREEN}🎉 All done!${NC}"
