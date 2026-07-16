@@ -4,7 +4,7 @@ A programmable, **OpenAI-compatible** image & video generation API + CLI on top 
 
 It works by bridging to the **Flow Chrome extension** over WebSocket, executing commands inside a logged-in Google Flow browser session.
 
-> **Requirement:** Chrome with the Flow Agent extension installed and logged in at `labs.google/fx/tools/flow`. The extension is the generation engine — the backend just drives it. (No Docker required.)
+> **Requirement:** Chrome with the Flow Agent extension installed and logged in at `labs.google/fx/tools/flow`. The extension is the generation engine — the backend just drives it.
 
 ---
 
