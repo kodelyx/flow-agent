@@ -30,11 +30,11 @@ It works by establishing a secure WebSocket bridge to the **Flow Chrome Extensio
 ## 🚀 How It Works
 
 ```mermaid
-graph LR
-    A[AI Client / CLI] -- MCP/API --> B[Flow Agent Backend]
-    B -- WebSocket --> C[Chrome Extension]
-    C -- Browser Automation --> D[Google Flow Website]
-    D -- Generation --> E[Your Media 🎉]
+graph TD
+    A[AI Client / CLI] -- "MCP / API Connection" --> B[Flow Agent Backend]
+    B -- "WebSocket Bridge" --> C[Chrome Extension]
+    C -- "Browser Automation" --> D[Google Flow Website]
+    D -- "Success 🎉" --> E[Your Generated Media]
 ```
 
 ---
