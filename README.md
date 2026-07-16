@@ -245,7 +245,7 @@ asyncio.run(main())
 ## 📁 Project Structure
 
 ```
-flow-mcp/
+flow/
 ├── README.md                   # Home Page Documentation
 ├── MCP.md                      # Detailed MCP Client configurations
 ├── flow-chrome-extension/      # Chrome extension source
