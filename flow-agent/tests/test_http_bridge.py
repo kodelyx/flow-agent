@@ -59,7 +59,8 @@ def test_same_command_id_can_requeue_after_poll():
 def test_enqueue_none_goes_to_latest_online():
     reg = ExtensionHttpRegistry(session_ttl_sec=15)
     reg.hello(session_id="s1", flow_key="tok1", secret="sec1")
-    time.sleep(0.01)
+    # Windows monotonic clock resolution can be ~15ms; sleep enough to order last_seen.
+    time.sleep(0.05)
     reg.hello(session_id="s2", flow_key="tok2", secret="sec2")
     assert reg.enqueue(None, {"id": "r1", "method": "get_status", "params": {}}) is True
     s1 = reg.poll("s1")
