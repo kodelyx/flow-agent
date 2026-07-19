@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Flow Agent",
-  "version": "1.2.4",
-  "description": "Google Flow image and video generation with health, credits, models, history, CLI and MCP support",
+  "version": "1.0.0",
+  "description": "Automate Google Flow \u2014 T2V, V2V, I2V video + T2I, I2I unlimited image generation from terminal",
   "icons": {
     "16": "icon16.png",
     "48": "icon48.png",
@@ -24,7 +24,7 @@
     "https://storage.googleapis.com/*",
     "http://127.0.0.1:8001/*",
     "http://localhost:8001/*",
-    "https://flow.kodelyx.in/*"
+    "http://127.0.0.1:8100/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -61,9 +61,10 @@
     ]
   },
   "side_panel": {
-    "default_path": "popup.html"
+    "default_path": "side_panel.html"
   },
   "action": {
+    "default_popup": "popup.html",
     "default_title": "Flow Agent",
     "default_icon": {
       "16": "icon16.png",
