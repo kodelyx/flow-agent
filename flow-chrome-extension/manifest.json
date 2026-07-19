@@ -2,18 +2,28 @@
   "manifest_version": 3,
   "name": "Flow Agent",
   "version": "1.0.0",
-  "description": "Automate Google Flow — T2V, V2V, I2V video + T2I, I2I unlimited image generation from terminal",
+  "description": "Automate Google Flow \u2014 T2V, V2V, I2V video + T2I, I2I unlimited image generation from terminal",
   "icons": {
     "16": "icon16.png",
     "48": "icon48.png",
     "128": "icon128.png"
   },
-  "permissions": ["storage", "alarms", "tabs", "webRequest", "scripting", "declarativeNetRequest", "sidePanel"],
+  "permissions": [
+    "storage",
+    "alarms",
+    "tabs",
+    "webRequest",
+    "scripting",
+    "declarativeNetRequest",
+    "sidePanel"
+  ],
   "host_permissions": [
     "https://labs.google/*",
     "https://aisandbox-pa.googleapis.com/*",
     "https://aisandbox-pa.sandbox.googleapis.com/*",
     "https://storage.googleapis.com/*",
+    "http://127.0.0.1:8001/*",
+    "http://localhost:8001/*",
     "http://127.0.0.1:8100/*"
   ],
   "background": {
@@ -25,14 +35,20 @@
         "https://labs.google/fx/tools/flow*",
         "https://labs.google/fx/*/tools/flow*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_start"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["injected.js"],
-      "matches": ["https://labs.google/*"]
+      "resources": [
+        "injected.js"
+      ],
+      "matches": [
+        "https://labs.google/*"
+      ]
     }
   ],
   "declarative_net_request": {
