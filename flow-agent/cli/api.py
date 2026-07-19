@@ -30,17 +30,6 @@ from omniflash import ExtensionBridge, DEFAULT_PROJECT
 from omniflash.config import CREDITS_PER_VIDEO
 from omniflash.generators.t2i import generate_image, download_image, _parse_image_results
 
-from omniflash.control.db import create_database
-from omniflash.control.events import EventBus
-from omniflash.control.extension_registry import ExtensionRegistry
-from omniflash.control.flow_adapter import FlowAdapter, FlowAdapterSettings
-from omniflash.control.material_store import MaterialStore
-from omniflash.control.profile_manager import ProfileManager
-from omniflash.control.recovery import RecoveryService
-from omniflash.control.repositories import Repositories
-from omniflash.control.scheduler import Scheduler
-from omniflash.control.services import ControlServices
-from omniflash.control.settings import ControlSettings
 
 # Setup logging (format configured centrally in omniflash/__init__.py, imported above)
 log = logging.getLogger("omniflash.openai_api")
@@ -120,6 +109,25 @@ async def lifespan(app: FastAPI):
     control_services: ControlServices | None = None
     bridge = None
     if _control_center_enabled():
+        # Optional durable control-center path. Imported lazily so the default
+        # HTTP/WS extension bridge works without that package present.
+        try:
+            from omniflash.control.db import create_database
+            from omniflash.control.events import EventBus
+            from omniflash.control.extension_registry import ExtensionRegistry
+            from omniflash.control.flow_adapter import FlowAdapter, FlowAdapterSettings
+            from omniflash.control.material_store import MaterialStore
+            from omniflash.control.profile_manager import ProfileManager
+            from omniflash.control.recovery import RecoveryService
+            from omniflash.control.repositories import Repositories
+            from omniflash.control.scheduler import Scheduler
+            from omniflash.control.services import ControlServices
+            from omniflash.control.settings import ControlSettings
+        except ImportError as error:
+            raise RuntimeError(
+                "FLOW_CONTROL_CENTER_ENABLED is set but omniflash.control is unavailable"
+            ) from error
+
         settings = ControlSettings()
         settings.ensure_directories()
         database = await create_database(settings.db_path)
