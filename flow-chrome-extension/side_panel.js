@@ -107,11 +107,23 @@ function updateStatus(data) {
   _status = data;
   _statusAt = Date.now();
 
-  const connected = data.agentConnected;
+  const connected = data.agentConnected || data.connected || data.httpConnected;
+  const transport = data.transport || (data.httpConnected ? 'http' : (connected ? 'ws' : 'none'));
 
   // Connection dot
   const dot = document.getElementById('conn-dot');
-  dot.className = connected ? 'on' : '';
+  if (dot) {
+    dot.className = connected ? 'on' : '';
+    const pill = document.getElementById('conn-pill');
+    if (pill) pill.title = connected ? `Connected (${transport})` : 'Disconnected';
+  }
+
+  // Transport chip (optional)
+  const transportEl = document.getElementById('transport-status');
+  if (transportEl) {
+    transportEl.textContent = connected ? transport.toUpperCase() : 'OFF';
+    transportEl.className = connected ? `transport on ${transport}` : 'transport';
+  }
 
   // Toggle state
   const toggle = document.getElementById('main-toggle');
@@ -152,7 +164,7 @@ function updateStatus(data) {
       tokenEl.className = 'ok';
     }
     // Auto-refresh when token age > 55 min and connected
-    if (ageMs > 3300000 && data.agentConnected) {
+    if (ageMs > 3300000 && connected) {
       chrome.runtime.sendMessage({ type: 'REFRESH_TOKEN' });
     }
   } else {

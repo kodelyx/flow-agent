@@ -86,6 +86,8 @@ def cmd_status(argv):
         print(f"  status:              {data.get('status')}")
         print(f"  extension_connected: {data.get('extension_connected')}")
         print(f"  has_flow_key:        {data.get('has_flow_key')}")
+        if "transport" in data:
+            print(f"  transport:           {data.get('transport')}")
     except urllib.error.URLError:
         print(f"Backend: down. Start it with `flow serve`.")
         sys.exit(1)
