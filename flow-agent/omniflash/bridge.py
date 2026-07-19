@@ -5,9 +5,11 @@ Handles auth token capture, API proxying, and request/response routing.
 """
 
 import asyncio
+import hmac
 import json
 import logging
 import random
+import secrets
 import threading
 import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -19,6 +21,7 @@ from .config import (
     CLIENT_CTX, USER_AGENTS, API_REQUEST_TIMEOUT,
     MAX_CONCURRENT_REQUESTS, REQUEST_MIN_INTERVAL,
 )
+from .http_bridge import ExtensionHttpRegistry
 
 log = logging.getLogger("omniflash.bridge")
 
@@ -26,7 +29,7 @@ log = logging.getLogger("omniflash.bridge")
 class ExtensionBridge:
     """WebSocket server that Chrome extension connects to."""
 
-    def __init__(self):
+    def __init__(self, session_ttl_sec: float = 15.0):
         self._ws = None
         self._pending: dict[str, asyncio.Future] = {}
         self._flow_key = None
@@ -47,6 +50,11 @@ class ExtensionBridge:
         self._rate_sem: asyncio.Semaphore | None = None
         self._rate_lock: asyncio.Lock | None = None
         self._last_request_at: float = 0.0
+        # Per-process callback credential shared only with the connected extension.
+        # Keep this out of configuration, logs, and error responses.
+        self._callback_secret = secrets.token_urlsafe(32)
+        # HTTP hello/poll transport (preferred for fingerprint browsers).
+        self.http_registry = ExtensionHttpRegistry(session_ttl_sec=session_ttl_sec)
 
     def _get_rate_limit(self):
         """Lazily build the concurrency semaphore + spacing lock on the active
@@ -75,7 +83,66 @@ class ExtensionBridge:
             oldest = next(iter(self._req_meta))
             self._req_meta.pop(oldest, None)
 
+    def is_extension_connected(self) -> bool:
+        """True when an HTTP session is online or a WebSocket is open."""
+        if self.http_registry.has_online_session():
+            return True
+        return self._ws is not None
+
+    def has_flow_key(self) -> bool:
+        if self._flow_key:
+            return True
+        return bool(self.http_registry.get_flow_key())
+
+    def active_transport(self) -> str:
+        """Return preferred active transport: http | ws | none."""
+        if self.http_registry.has_online_session():
+            return "http"
+        if self._ws is not None:
+            return "ws"
+        return "none"
+
+    def enqueue_http_command(self, command: dict) -> bool:
+        """Enqueue a command for the latest online HTTP session."""
+        return self.http_registry.enqueue(None, command)
+
+    def register_http_session(
+        self,
+        session_id: str,
+        flow_key: str | None = None,
+        *,
+        secret: str | None = None,
+        meta: dict | None = None,
+    ) -> dict:
+        """Register/refresh an HTTP extension session and mirror flow key."""
+        resolved_secret = secret or self._callback_secret
+        out = self.http_registry.hello(
+            session_id=session_id,
+            flow_key=flow_key,
+            secret=resolved_secret,
+            meta=meta,
+        )
+        if flow_key:
+            self._flow_key = flow_key
+            if self._loop is not None:
+                self._loop.call_soon_threadsafe(self._connected.set)
+            else:
+                self._connected.set()
+        return out
+
+    def poll_http_commands(self, session_id: str, max_commands: int = 10) -> dict:
+        return self.http_registry.poll(session_id, max_commands=max_commands)
+
+    def verify_http_session_authorization(
+        self, session_id: str, authorization: str | None
+    ) -> bool:
+        return self.http_registry.verify_authorization(session_id, authorization)
+
     async def send_message(self, msg):
+        # Prefer HTTP command queue when an extension is polling.
+        if self.http_registry.has_online_session():
+            self.http_registry.enqueue(None, msg)
+            return
         if not self._ws:
             return
         try:
@@ -85,6 +152,13 @@ class ExtensionBridge:
                 await self._ws.send(json.dumps(msg))
         except Exception as e:
             log.warning("Failed to send message: %s", e)
+
+    def _callback_config(self, callback_url):
+        return {
+            "type": "callback_config",
+            "secret": self._callback_secret,
+            "callback_url": callback_url,
+        }
 
     async def handle_fastapi_ws(self, ws):
         self._ws = ws
@@ -101,11 +175,7 @@ class ExtensionBridge:
         else:
             callback_url = f"http://127.0.0.1:{os.environ.get('OPENAI_API_PORT', '8001')}/api/ext/callback"
 
-        await self.send_message({
-            "type": "callback_config",
-            "secret": "flow_secret",
-            "callback_url": callback_url
-        })
+        await self.send_message(self._callback_config(callback_url))
 
         # Send current state + resend token if we have one
         await self.send_message({
@@ -130,15 +200,24 @@ class ExtensionBridge:
             self._connected.clear()
 
     async def start(self):
-        """Start WS server and HTTP callback server."""
-        self._loop = asyncio.get_event_loop()
-        self._start_http_server()
+        """Start optional standalone WS/HTTP servers for non-FastAPI callers."""
+        self._loop = asyncio.get_running_loop()
+        self._ws_server = None
+        try:
+            self._start_http_server()
+            log.info("HTTP callback on http://127.0.0.1:%d", HTTP_PORT)
+        except OSError as error:
+            log.warning("Standalone HTTP callback server unavailable: %s", error)
 
-        self._ws_server = await websockets.serve(
-            self._on_connect, "127.0.0.1", WS_PORT
-        )
-        log.info("WebSocket server on ws://127.0.0.1:%d", WS_PORT)
-        log.info("HTTP callback on http://127.0.0.1:%d", HTTP_PORT)
+        try:
+            self._ws_server = await websockets.serve(
+                self._on_connect, "127.0.0.1", WS_PORT
+            )
+            log.info("WebSocket server on ws://127.0.0.1:%d", WS_PORT)
+        except OSError as error:
+            # FastAPI mode uses /ws on the API port; standalone WS is optional.
+            log.warning("Standalone WebSocket server unavailable: %s", error)
+
         log.info("Waiting for Chrome extension to connect...")
 
     async def wait_for_extension(self, timeout=90, max_retries=3):
@@ -179,8 +258,8 @@ class ExtensionBridge:
         return False
 
     async def _wait_for_ws(self):
-        """Wait until a WebSocket connection is established."""
-        while not self._ws:
+        """Wait until WebSocket or HTTP session is established."""
+        while not self.is_extension_connected():
             await asyncio.sleep(0.5)
 
     async def _wait_for_token(self, timeout):
@@ -194,7 +273,7 @@ class ExtensionBridge:
 
     async def _request_flow_tab(self):
         """Ask extension to open or refresh a Flow tab."""
-        if not self._ws:
+        if not self.is_extension_connected():
             return
         try:
             log.info("Requesting extension to open/refresh Flow tab...")
@@ -208,8 +287,11 @@ class ExtensionBridge:
 
     async def health_check(self):
         """Quick check if extension is ready with valid token."""
-        if not self._ws or not self._flow_key:
+        if not self.is_extension_connected() or not self.has_flow_key():
             return False
+        # HTTP mode: presence of recent session + flow key is enough health.
+        if self.active_transport() == "http":
+            return True
         try:
             req_id = str(uuid.uuid4())
             future = self._loop.create_future()
@@ -228,6 +310,9 @@ class ExtensionBridge:
     async def _on_connect(self, ws):
         self._ws = ws
         log.info("Extension connected!")
+        await self.send_message(self._callback_config(
+            f"http://127.0.0.1:{HTTP_PORT}/api/ext/callback"
+        ))
         try:
             async for raw in ws:
                 data = json.loads(raw)
@@ -290,6 +375,15 @@ class ExtensionBridge:
         else:
             log.warning("Dropped orphan response for %s (no handler)", req_id)
 
+    def verify_callback_authorization(self, authorization):
+        """Constant-time verification for the callback Bearer credential."""
+        candidate = ""
+        if isinstance(authorization, str):
+            scheme, separator, value = authorization.partition(" ")
+            if separator and scheme.lower() == "bearer":
+                candidate = value.strip()
+        return hmac.compare_digest(candidate, self._callback_secret)
+
     def handle_http_callback(self, data):
         """Called from HTTP thread when extension sends callback."""
         req_id = data.get("id")
@@ -299,13 +393,32 @@ class ExtensionBridge:
             # loop thread; _route_response dedups and recovers as needed.
             if (req_id in self._pending or req_id in self._req_meta
                     or req_id in self._seen_ids):
-                self._loop.call_soon_threadsafe(
-                    self._resolve_pending, req_id, data
-                )
+                if self._loop is not None:
+                    self._loop.call_soon_threadsafe(
+                        self._resolve_pending, req_id, data
+                    )
+                else:
+                    self._resolve_pending(req_id, data)
                 return True
-        if data.get("type") == "token_captured":
+        msg_type = data.get("type")
+        if msg_type == "token_captured":
             self._flow_key = data.get("flowKey")
-            self._loop.call_soon_threadsafe(self._connected.set)
+            session_id = data.get("session_id") or data.get("sessionId")
+            if session_id and self._flow_key:
+                self.http_registry.hello(
+                    session_id=str(session_id),
+                    flow_key=self._flow_key,
+                    secret=self._callback_secret,
+                )
+            if self._loop is not None:
+                self._loop.call_soon_threadsafe(self._connected.set)
+            else:
+                self._connected.set()
+            return True
+        if msg_type in ("extension_ready", "ping", "media_urls_refresh"):
+            session_id = data.get("session_id") or data.get("sessionId")
+            if session_id:
+                self.http_registry.touch(str(session_id))
             return True
         return False
 
@@ -320,7 +433,7 @@ class ExtensionBridge:
         REQUEST_MIN_INTERVAL seconds apart. Non-generation calls (polling,
         credits — captcha_action="") bypass the limiter so they stay responsive.
         """
-        if not self._ws:
+        if not self.is_extension_connected():
             return {"error": "Extension not connected"}
 
         # Only throttle credit/captcha-consuming generation calls.
@@ -389,52 +502,70 @@ class ExtensionBridge:
         finally:
             self._pending.pop(req_id, None)
 
-    def _start_http_server(self):
-        """Start HTTP server for extension callbacks (runs in thread)."""
+    def _make_http_handler(self):
+        """Build the authenticated standalone callback request handler."""
         bridge = self
 
         class Handler(BaseHTTPRequestHandler):
+            def _send_json(self, status, payload):
+                encoded = json.dumps(payload, separators=(",", ":")).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
             def do_POST(self):
-                if self.path == "/api/ext/callback":
+                if self.path != "/api/ext/callback":
+                    self._send_json(404, {"ok": False})
+                    return
+
+                authorization = self.headers.get("Authorization")
+                if authorization is None:
+                    self._send_json(401, {"ok": False})
+                    return
+                if not bridge.verify_callback_authorization(authorization):
+                    self._send_json(403, {"ok": False})
+                    return
+
+                try:
                     length = int(self.headers.get("Content-Length", 0))
                     body = json.loads(self.rfile.read(length)) if length else {}
-                    bridge.handle_http_callback(body)
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Access-Control-Allow-Origin", "*")
-                    self.end_headers()
-                    self.wfile.write(b'{"ok":true}')
-                else:
-                    self.send_response(404)
-                    self.end_headers()
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    self._send_json(400, {"ok": False})
+                    return
+
+                accepted = bridge.handle_http_callback(body)
+                self._send_json(200 if accepted else 404, {"ok": bool(accepted)})
 
             def do_GET(self):
                 if self.path == "/health":
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(json.dumps({
+                    self._send_json(200, {
                         "status": "ok",
-                        "extension_connected": bridge._ws is not None,
-                    }).encode())
+                        "extension_connected": bridge.is_extension_connected(),
+                        "has_flow_key": bridge.has_flow_key(),
+                        "transport": bridge.active_transport(),
+                    })
                 else:
-                    self.send_response(404)
-                    self.end_headers()
+                    self._send_json(404, {"ok": False})
 
             def do_OPTIONS(self):
-                self.send_response(200)
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-                self.send_header("Access-Control-Allow-Headers", "Content-Type")
-                self.end_headers()
+                # This loopback endpoint is not a public cross-origin API.
+                self._send_json(405, {"ok": False})
 
             def log_message(self, *args):
                 pass
 
-        server = HTTPServer(("127.0.0.1", HTTP_PORT), Handler)
+        return Handler
+
+    def _start_http_server(self):
+        """Start HTTP server for extension callbacks (runs in thread)."""
+        server = HTTPServer(("127.0.0.1", HTTP_PORT), self._make_http_handler())
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
 
     async def close(self):
-        self._ws_server.close()
-        await self._ws_server.wait_closed()
+        if self._ws_server is not None:
+            self._ws_server.close()
+            await self._ws_server.wait_closed()
+            self._ws_server = None

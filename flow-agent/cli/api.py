@@ -30,6 +30,18 @@ from omniflash import ExtensionBridge, DEFAULT_PROJECT
 from omniflash.config import CREDITS_PER_VIDEO
 from omniflash.generators.t2i import generate_image, download_image, _parse_image_results
 
+from omniflash.control.db import create_database
+from omniflash.control.events import EventBus
+from omniflash.control.extension_registry import ExtensionRegistry
+from omniflash.control.flow_adapter import FlowAdapter, FlowAdapterSettings
+from omniflash.control.material_store import MaterialStore
+from omniflash.control.profile_manager import ProfileManager
+from omniflash.control.recovery import RecoveryService
+from omniflash.control.repositories import Repositories
+from omniflash.control.scheduler import Scheduler
+from omniflash.control.services import ControlServices
+from omniflash.control.settings import ControlSettings
+
 # Setup logging (format configured centrally in omniflash/__init__.py, imported above)
 log = logging.getLogger("omniflash.openai_api")
 
@@ -92,25 +104,72 @@ async def recover_orphan_response(data: dict, meta: dict):
     except Exception:
         log.exception("Failed to recover orphan response")
 
-# ExtensionBridge lifecycle
+# ExtensionBridge / durable control-center lifecycle
 bridge: Optional[ExtensionBridge] = None
+
+
+def _control_center_enabled() -> bool:
+    return os.environ.get("FLOW_CONTROL_CENTER_ENABLED", "0").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global bridge
-    log.info("Starting Flow Agent Extension Bridge (OpenAI Interface)...")
-    bridge = ExtensionBridge()
-    bridge.set_orphan_handler(recover_orphan_response)
-    await bridge.start()
+    control_services: ControlServices | None = None
+    bridge = None
+    if _control_center_enabled():
+        settings = ControlSettings()
+        settings.ensure_directories()
+        database = await create_database(settings.db_path)
+        repositories = Repositories(database.session_factory)
+        events = EventBus()
+        profiles = ProfileManager(settings.profiles_dir)
+        extensions = ExtensionRegistry(
+            database.session_factory, request_timeout=settings.submit_timeout_seconds
+        )
+        materials = MaterialStore(
+            settings.materials_dir, database.session_factory,
+            max_material_bytes=settings.max_material_bytes,
+        )
+        flow = FlowAdapter(
+            extensions, materials, repositories,
+            settings=FlowAdapterSettings(
+                project_id=DEFAULT_PROJECT,
+                submit_timeout_seconds=settings.submit_timeout_seconds,
+                outputs_dir=settings.outputs_dir,
+            ),
+        )
+        scheduler = Scheduler(
+            repositories, flow=flow, settings=settings, events=events
+        )
+        recovery = RecoveryService(repositories, events=events)
+        control_services = ControlServices(
+            settings=settings, database=database, repositories=repositories,
+            events=events, profiles=profiles, extensions=extensions,
+            materials=materials, flow=flow, scheduler=scheduler,
+            recovery=recovery,
+        )
+        await control_services.start()
+        app.state.services = control_services
+        log.info("Durable control-center services started")
+    else:
+        log.info("Starting Flow Agent Extension Bridge (OpenAI Interface)...")
+        bridge = ExtensionBridge()
+        bridge.set_orphan_handler(recover_orphan_response)
+        await bridge.start()
+        asyncio.create_task(bridge.wait_for_extension(timeout=30))
 
-    # Run extension connection in background
-    asyncio.create_task(bridge.wait_for_extension(timeout=30))
-
-    yield
-
-    log.info("Closing Flow Agent Extension Bridge...")
-    if bridge:
-        await bridge.close()
+    try:
+        yield
+    finally:
+        if control_services is not None:
+            await control_services.close()
+            app.state.services = None
+        elif bridge:
+            log.info("Closing Flow Agent Extension Bridge...")
+            await bridge.close()
 
 app = FastAPI(
     title="Flow Agent OpenAI API Wrapper",
@@ -209,6 +268,21 @@ class VideoGenerationRequest(BaseModel):
 # Extension WebSocket and Callback Endpoints
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    control_center_enabled = os.environ.get(
+        "FLOW_CONTROL_CENTER_ENABLED", "0"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if control_center_enabled:
+        services = getattr(app.state, "services", None)
+        extensions = getattr(services, "extensions", None)
+        if extensions is not None:
+            await extensions.handle_websocket(websocket)
+            return
+
+        log.error("Control center enabled but extension registry is unavailable")
+        await websocket.accept()
+        await websocket.close(code=1013)
+        return
+
     await websocket.accept()
     log.info("Extension connecting via FastAPI WebSocket...")
     global bridge
@@ -218,13 +292,102 @@ async def websocket_endpoint(websocket: WebSocket):
         log.error("Bridge not initialized")
         await websocket.close()
 
-@app.post("/api/ext/callback")
-async def http_callback(body: dict):
+
+def _public_base_url() -> str:
+    space_id = os.environ.get("SPACE_ID")
+    if space_id:
+        author, name = space_id.split("/")
+        subdomain = f"{author.lower()}-{name.lower()}".replace("_", "-")
+        return f"https://{subdomain}.hf.space"
+    port = os.environ.get("OPENAI_API_PORT", "8001")
+    return f"http://127.0.0.1:{port}"
+
+
+@app.post("/api/ext/hello")
+async def extension_hello(body: dict):
+    """Register/refresh an HTTP extension session and issue callback secret."""
     global bridge
-    if bridge:
-        success = bridge.handle_http_callback(body)
-        return {"ok": success}
-    return {"ok": False}
+    if bridge is None:
+        return JSONResponse(status_code=503, content={"ok": False})
+
+    session_id = body.get("session_id") or body.get("sessionId")
+    if not session_id:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "session_id required"},
+        )
+
+    flow_key = body.get("flowKey") or body.get("flow_key")
+    if not flow_key and body.get("flowKeyPresent") and bridge._flow_key:
+        flow_key = bridge._flow_key
+
+    # Prefer existing per-process callback secret so WS and HTTP share auth.
+    secret = bridge._callback_secret
+    meta = {
+        "extension_version": body.get("extension_version") or body.get("extensionVersion"),
+        "capabilities": body.get("capabilities"),
+    }
+    registered = bridge.register_http_session(
+        session_id=str(session_id),
+        flow_key=flow_key,
+        secret=secret,
+        meta=meta,
+    )
+    base = _public_base_url()
+    poll_interval_ms = int(os.environ.get("EXT_POLL_INTERVAL_MS", "1000"))
+    return {
+        "ok": True,
+        "session_id": registered["session_id"],
+        "secret": secret,
+        "callback_url": f"{base}/api/ext/callback",
+        "poll_url": f"{base}/api/ext/poll",
+        "poll_interval_ms": poll_interval_ms,
+        "events_url": f"{base}/api/ext/events",
+    }
+
+
+@app.get("/api/ext/poll")
+async def extension_poll(request: Request, session_id: str = Query(...)):
+    """Pull pending backend commands for an authenticated HTTP session."""
+    global bridge
+    if bridge is None:
+        return JSONResponse(status_code=503, content={"ok": False, "commands": []})
+
+    authorization = request.headers.get("Authorization")
+    if authorization is None:
+        return JSONResponse(status_code=401, content={"ok": False, "commands": []})
+    if not bridge.verify_http_session_authorization(session_id, authorization):
+        return JSONResponse(status_code=403, content={"ok": False, "commands": []})
+
+    result = bridge.poll_http_commands(session_id)
+    if not result.get("ok"):
+        return JSONResponse(status_code=404, content=result)
+    return result
+
+
+@app.post("/api/ext/callback")
+async def http_callback(request: Request, body: dict):
+    global bridge
+    if bridge is None:
+        return JSONResponse(status_code=503, content={"ok": False})
+
+    authorization = request.headers.get("Authorization")
+    if authorization is None:
+        return JSONResponse(status_code=401, content={"ok": False})
+    if not bridge.verify_callback_authorization(authorization):
+        # Also accept a valid per-session HTTP secret (shared secret is default).
+        session_id = body.get("session_id") or body.get("sessionId")
+        if not (
+            session_id
+            and bridge.verify_http_session_authorization(str(session_id), authorization)
+        ):
+            return JSONResponse(status_code=403, content={"ok": False})
+
+    accepted = bridge.handle_http_callback(body)
+    return JSONResponse(
+        status_code=200 if accepted else 404,
+        content={"ok": bool(accepted)},
+    )
 
 
 # OpenAI Endpoints
@@ -887,11 +1050,12 @@ async def root():
 async def health():
     global bridge
     if not bridge:
-        return {"status": "starting", "connected": False}
+        return {"status": "starting", "connected": False, "transport": "none"}
     return {
         "status": "healthy" if await bridge.health_check() else "unauthorized_or_disconnected",
-        "extension_connected": bridge._ws is not None,
-        "has_flow_key": bridge._flow_key is not None
+        "extension_connected": bridge.is_extension_connected(),
+        "has_flow_key": bridge.has_flow_key(),
+        "transport": bridge.active_transport(),
     }
 
 

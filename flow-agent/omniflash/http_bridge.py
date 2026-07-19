@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import threading
 import time
 from collections import deque
@@ -44,14 +45,20 @@ class ExtensionHttpRegistry:
                     existing.flow_key = flow_key
                 if secret:
                     existing.secret = secret
+                resolved_secret = existing.secret
             else:
+                resolved_secret = secret or ""
                 self._sessions[session_id] = Session(
                     session_id=session_id,
-                    secret=secret or "",
+                    secret=resolved_secret,
                     flow_key=flow_key,
                     last_seen=now,
                 )
-            return {"ok": True, "session_id": session_id}
+            return {
+                "ok": True,
+                "session_id": session_id,
+                "secret": resolved_secret,
+            }
 
     def touch(self, session_id: str) -> bool:
         """Refresh last_seen for an existing online session."""
@@ -75,6 +82,21 @@ class ExtensionHttpRegistry:
 
     def has_online_session(self) -> bool:
         return self.is_connected(None)
+
+    def verify_authorization(self, session_id: str, authorization: str | None) -> bool:
+        """Constant-time Bearer check against the session secret."""
+        candidate = ""
+        if isinstance(authorization, str):
+            scheme, separator, value = authorization.partition(" ")
+            if separator and scheme.lower() == "bearer":
+                candidate = value.strip()
+        now = time.monotonic()
+        with self._lock:
+            self._purge_expired_unlocked(now)
+            session = self._get_online_unlocked(session_id, now)
+            if session is None:
+                return False
+            return hmac.compare_digest(candidate, session.secret or "")
 
     def enqueue(self, session_id: str | None, command: dict[str, Any]) -> bool:
         """
@@ -114,7 +136,12 @@ class ExtensionHttpRegistry:
             commands: list[dict[str, Any]] = []
             while session.queue and len(commands) < max_n:
                 commands.append(session.queue.popleft())
-            return {"commands": commands, "ok": True, "session_id": session_id}
+            return {
+                "ok": True,
+                "commands": commands,
+                "session_id": session_id,
+                "server_time": int(time.time() * 1000),
+            }
 
     def get_flow_key(self, session_id: str | None = None) -> str | None:
         """Return flow_key for a session, or the most recently seen online session."""
