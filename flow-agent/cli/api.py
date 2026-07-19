@@ -268,6 +268,13 @@ class VideoGenerationRequest(BaseModel):
 # Extension WebSocket and Callback Endpoints
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    enable_ws = os.environ.get("ENABLE_EXTENSION_WS", "1").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    if not enable_ws:
+        await websocket.close(code=1000)
+        return
+
     control_center_enabled = os.environ.get(
         "FLOW_CONTROL_CENTER_ENABLED", "0"
     ).strip().lower() in {"1", "true", "yes", "on"}

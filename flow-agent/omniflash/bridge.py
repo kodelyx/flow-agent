@@ -20,6 +20,7 @@ from .config import (
     WS_PORT, HTTP_PORT, API_BASE, API_KEY,
     CLIENT_CTX, USER_AGENTS, API_REQUEST_TIMEOUT,
     MAX_CONCURRENT_REQUESTS, REQUEST_MIN_INTERVAL,
+    EXT_SESSION_TTL_SEC,
 )
 from .http_bridge import ExtensionHttpRegistry
 
@@ -29,7 +30,7 @@ log = logging.getLogger("omniflash.bridge")
 class ExtensionBridge:
     """WebSocket server that Chrome extension connects to."""
 
-    def __init__(self, session_ttl_sec: float = 15.0):
+    def __init__(self, session_ttl_sec: float | None = None):
         self._ws = None
         self._pending: dict[str, asyncio.Future] = {}
         self._flow_key = None
@@ -54,7 +55,8 @@ class ExtensionBridge:
         # Keep this out of configuration, logs, and error responses.
         self._callback_secret = secrets.token_urlsafe(32)
         # HTTP hello/poll transport (preferred for fingerprint browsers).
-        self.http_registry = ExtensionHttpRegistry(session_ttl_sec=session_ttl_sec)
+        ttl = EXT_SESSION_TTL_SEC if session_ttl_sec is None else float(session_ttl_sec)
+        self.http_registry = ExtensionHttpRegistry(session_ttl_sec=ttl)
 
     def _get_rate_limit(self):
         """Lazily build the concurrency semaphore + spacing lock on the active
