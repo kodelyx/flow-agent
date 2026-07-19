@@ -56,10 +56,25 @@ def cmd_serve(argv):
     args = parser.parse_args(argv)
 
     import uvicorn
+
+    # Always serve from this repo's flow-agent/ tree (not a globally installed flow.exe).
+    os.chdir(ROOT_DIR)
+    if ROOT_DIR not in sys.path:
+        sys.path.insert(0, ROOT_DIR)
+
     print(f"Flow Agent starting on http://{args.host}:{args.port}")
+    print(f"  code_root: {ROOT_DIR}")
+    print(f"  python:    {sys.executable}")
     print("Waiting for the Chrome extension (open Google Flow in Chrome to connect).")
-    uvicorn.run("cli.api:app", host=args.host, port=args.port,
-                reload=args.reload, access_log=False)
+    print("Tip: prefer  .\\scripts\\dev-serve.ps1  so old global flow.exe cannot steal :8001")
+    uvicorn.run(
+        "cli.api:app",
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+        access_log=False,
+        app_dir=ROOT_DIR,
+    )
 
 
 def cmd_credits(argv):

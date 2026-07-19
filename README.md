@@ -67,18 +67,32 @@ Get-Content .\docs\superpowers\plans\2026-07-20-extension-http-bridge.md -TotalC
 ```
 
 ### 本地快速启动（本目录）
-```powershell
-# 终端 1：启动后端
-cd F:\Code\Flow-Agent-New\flow-agent
-python -m flow_cli serve
-# 或：flow serve   （若已安装 CLI）
 
-# 终端 2：健康检查
+> **重要：** 不要用全局 `flow serve` / 其他目录安装的 `flow.exe`。  
+> 本机 PATH 上的 `flow` 可能是旧代码（例如 hermes venv），会占住 `:8001` 导致测到旧后端。
+
+```powershell
+# 推荐：工作区脚本（会先停掉占用 8001 的旧后端，再启动本仓库代码）
+cd F:\Code\Flow-Agent-New
+.\scripts\dev-serve.ps1
+
+# 确认当前 8001 跑的是本仓库
+.\scripts\which-backend.ps1
+
+# 健康检查（应含 code_root = 本仓库 flow-agent 路径，且有 transport）
 curl http://127.0.0.1:8001/health
 
 # 浏览器：chrome://extensions → 加载已解压扩展
 # 选择：F:\Code\Flow-Agent-New\flow-chrome-extension
 # 然后打开 https://labs.google/fx/tools/flow
+```
+
+等价手写启动（仅当确认未跑旧 flow.exe 时）：
+
+```powershell
+cd F:\Code\Flow-Agent-New\flow-agent
+$env:PYTHONPATH = (Get-Location).Path
+python -m flow_cli serve --host 127.0.0.1 --port 8001
 ```
 
 

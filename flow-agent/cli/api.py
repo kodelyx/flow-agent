@@ -1055,22 +1055,46 @@ async def get_flow_credits():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+def _runtime_identity() -> dict:
+    """Expose which on-disk code this process is running (for test safety)."""
+    import omniflash.bridge as _bridge_mod
+
+    return {
+        "code_root": os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "cli_api_file": os.path.abspath(__file__),
+        "bridge_file": os.path.abspath(_bridge_mod.__file__),
+    }
+
+
 @app.get("/")
 async def root():
-    return {"status": "running", "service": "Flow Agent API"}
+    identity = _runtime_identity()
+    return {
+        "status": "running",
+        "service": "Flow Agent API",
+        **identity,
+    }
 
 
 # Health Check
 @app.get("/health")
 async def health():
     global bridge
+    identity = _runtime_identity()
     if not bridge:
-        return {"status": "starting", "connected": False, "transport": "none"}
+        return {
+            "status": "starting",
+            "connected": False,
+            "transport": "none",
+            **identity,
+        }
     return {
         "status": "healthy" if await bridge.health_check() else "unauthorized_or_disconnected",
         "extension_connected": bridge.is_extension_connected(),
         "has_flow_key": bridge.has_flow_key(),
         "transport": bridge.active_transport(),
+        **identity,
     }
 
 
