@@ -125,7 +125,7 @@ def handle_tools_list(request_id):
         },
         {
             "name": "generate_flow_video",
-            "description": "Generate a 10-second cinematic video clip using Google Flow. Optionally supports a starting frame reference image (Image-to-Video).",
+            "description": "Generate a cinematic video clip using Google Flow (4/6/8/10 seconds). Optionally supports a starting frame reference image (Image-to-Video).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -138,6 +138,12 @@ def handle_tools_list(request_id):
                         "description": "Video aspect ratio: 'landscape' or 'portrait' (default: 'landscape')",
                         "enum": ["landscape", "portrait"],
                         "default": "landscape"
+                    },
+                    "duration": {
+                        "type": "integer",
+                        "description": "Video duration in seconds (default: 10)",
+                        "enum": [4, 6, 8, 10],
+                        "default": 10
                     },
                     "start_image_path": {
                         "type": "string",
@@ -251,15 +257,22 @@ def call_generate_flow_image(prompt, size="1280x720", ref_image_path=None, model
     except Exception as e:
         return f"Failed to communicate with Flow Agent server: {str(e)}", None
 
-def call_generate_flow_video(prompt, aspect="landscape", start_image_path=None):
+def call_generate_flow_video(prompt, aspect="landscape", start_image_path=None, duration=10):
     if not prompt or not str(prompt).strip():
         return "Error: 'prompt' is required and cannot be empty."
     prompt = str(prompt).strip()
+    allowed_durations = {4, 6, 8, 10}
+    try:
+        duration = int(duration)
+    except (TypeError, ValueError):
+        duration = 10
+    if duration not in allowed_durations:
+        return f"Error: duration must be one of {sorted(allowed_durations)}, got {duration}"
     payload = {
         "prompt": prompt,
         "aspect": aspect,
         "n": 1,
-        "duration": 10
+        "duration": duration,
     }
     
     if start_image_path:
@@ -321,11 +334,12 @@ def handle_tool_call(request_id, tool_name, arguments):
                 "data": image_data_b64,
                 "mimeType": "image/png"
             })
-    elif tool_name == "generate_flow_video":
-        prompt = arguments.get("prompt")
-        aspect = arguments.get("aspect", "landscape")
-        start_image_path = arguments.get("start_image_path")
-        text = call_generate_flow_video(prompt, aspect, start_image_path)
+                elif tool_name == "generate_flow_video":
+                prompt = arguments.get("prompt")
+                aspect = arguments.get("aspect", "landscape")
+                start_image_path = arguments.get("start_image_path")
+                duration = arguments.get("duration", 10)
+                text = call_generate_flow_video(prompt, aspect, start_image_path, duration)
         content = [{"type": "text", "text": text}]
     else:
         return {

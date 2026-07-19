@@ -1233,7 +1233,7 @@ def get_mcp_tools_list():
         },
         {
             "name": "generate_flow_video",
-            "description": "Generate a 10-second cinematic video clip using Google Flow. Optionally supports a starting frame reference image (Image-to-Video).",
+            "description": "Generate a cinematic video clip using Google Flow (4/6/8/10 seconds). Optionally supports a starting frame reference image (Image-to-Video).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1246,6 +1246,12 @@ def get_mcp_tools_list():
                         "description": "Video aspect ratio: 'landscape' or 'portrait' (default: 'landscape')",
                         "enum": ["landscape", "portrait"],
                         "default": "landscape"
+                    },
+                    "duration": {
+                        "type": "integer",
+                        "description": "Video duration in seconds (default: 10)",
+                        "enum": [4, 6, 8, 10],
+                        "default": 10
                     },
                     "start_image_path": {
                         "type": "string",
@@ -1360,6 +1366,20 @@ async def execute_mcp_tool(request_id, tool_name, arguments):
             aspect = arguments.get("aspect", "landscape")
             start_image_path = arguments.get("start_image_path")
             start_media_id = arguments.get("start_media_id")
+            allowed_durations = {4, 6, 8, 10}
+            try:
+                duration = int(arguments.get("duration", 10))
+            except (TypeError, ValueError):
+                duration = 10
+            if duration not in allowed_durations:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": -32602,
+                        "message": f"Error: duration must be one of {sorted(allowed_durations)}, got {duration}",
+                    },
+                }
 
             start_image_base64 = None
             if start_image_path:
@@ -1389,7 +1409,7 @@ async def execute_mcp_tool(request_id, tool_name, arguments):
                 prompt=prompt,
                 aspect=aspect,
                 n=1,
-                duration=10,
+                duration=duration,
                 image_base64=start_image_base64,
                 start_media_id=start_media_id
             )
