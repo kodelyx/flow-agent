@@ -109,6 +109,14 @@ CREDITS_PER_VIDEO = {
 WS_PORT = int(os.environ.get("WS_PORT", "9227"))
 HTTP_PORT = int(os.environ.get("HTTP_PORT", "8100"))
 
+# Extension transport: auto (HTTP first, WS fallback) | http | ws
+EXT_TRANSPORT = os.environ.get("EXT_TRANSPORT", "auto").strip().lower()
+EXT_SESSION_TTL_SEC = float(os.environ.get("EXT_SESSION_TTL_SEC", "20"))
+EXT_POLL_INTERVAL_MS = int(os.environ.get("EXT_POLL_INTERVAL_MS", "1000"))
+ENABLE_EXTENSION_WS = os.environ.get("ENABLE_EXTENSION_WS", "1").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "10"))
 POLL_TIMEOUT = int(os.environ.get("POLL_TIMEOUT", "420"))
 

@@ -22,6 +22,132 @@ FastAPI Integration · Auto watermark removal · Reference-based editing · Zero
 
 ---
 
+## 🧭 本仓库工作区说明（迁移后）
+
+> **从本会话起，所有开发与改造都在本目录进行。**
+
+| 项 | 值 |
+|----|----|
+| **工作目录** | `F:\Code\Flow-Agent-New` |
+| **后端源码** | `F:\Code\Flow-Agent-New\flow-agent` |
+| **浏览器插件** | `F:\Code\Flow-Agent-New\flow-chrome-extension` |
+| **改造计划** | [`docs/superpowers/plans/2026-07-20-extension-http-bridge.md`](docs/superpowers/plans/2026-07-20-extension-http-bridge.md) |
+
+### 为什么迁移
+旧路径（Hubstudio 安装目录 / Flow-Agent-Cloak worktree）混杂运行时文件与多份副本，不利于干净开发。  
+本目录为独立干净仓库副本，后续请只在这里改代码、跑测试、提交。
+
+### 新会话接手请先做
+```powershell
+cd F:\Code\Flow-Agent-New
+dir
+Test-Path .\flow-agent\omniflash\bridge.py
+Test-Path .\flow-chrome-extension\background.js
+Get-Content .\docs\superpowers\plans\2026-07-20-extension-http-bridge.md -TotalCount 40
+```
+
+### 当前进行中的改造
+**目标：** 指纹浏览器（Hubstudio / AdsPower）里插件连不上本地 WebSocket 的问题。  
+**方案：** 扩展与后端改为 **HTTP 优先**（`hello` + `poll` + `callback`），WebSocket 仅作兼容回退。
+
+| 状态 | 说明 |
+|------|------|
+| ✅ 已完成 | 工作区迁移；`ExtensionHttpRegistry`；`POST /api/ext/hello` + `GET /api/ext/poll`；`/health.transport`；扩展 HTTP 优先 transport |
+| ✅ 配置 | `EXT_TRANSPORT` / `EXT_SESSION_TTL_SEC` / `EXT_POLL_INTERVAL_MS` / `ENABLE_EXTENSION_WS`（见 `flow-agent/config.env`） |
+| 🔜 验证 | 官方 Chrome / Hubstudio / AdsPower 实测连通 |
+| ⚠ 边界 | 若指纹浏览器连本地 HTTP 也全拦，还需 LAN IP / 公网隧道（不在当前计划内） |
+
+验证成功时 `/health` 期望类似：
+```json
+{
+  "extension_connected": true,
+  "has_flow_key": true,
+  "transport": "http"
+}
+```
+
+### 本地快速启动（本目录）
+
+> **重要：** 不要用全局 `flow serve` / 其他目录安装的 `flow.exe`。  
+> 本机 PATH 上的 `flow` 可能是旧代码（例如 hermes venv），会占住 `:8001` 导致测到旧后端。
+
+```powershell
+# 推荐：工作区脚本（会先停掉占用 8001 的旧后端，再启动本仓库代码）
+cd F:\Code\Flow-Agent-New
+.\scripts\dev-serve.ps1
+
+# 确认当前 8001 跑的是本仓库
+.\scripts\which-backend.ps1
+
+# 健康检查（应含 code_root = 本仓库 flow-agent 路径，且有 transport）
+curl http://127.0.0.1:8001/health
+
+# 浏览器：chrome://extensions → 加载已解压扩展
+# 选择：F:\Code\Flow-Agent-New\flow-chrome-extension
+# 然后打开 https://labs.google/fx/tools/flow
+```
+
+等价手写启动（仅当确认未跑旧 flow.exe 时）：
+
+```powershell
+cd F:\Code\Flow-Agent-New\flow-agent
+$env:PYTHONPATH = (Get-Location).Path
+python -m flow_cli serve --host 127.0.0.1 --port 8001
+```
+
+
+## 🔌 指纹浏览器 / HTTP 桥
+
+在 **Hubstudio / AdsPower** 等指纹浏览器里，本地 **WebSocket 经常被拦或秒断**，但本地 **HTTP 通常可用**。
+
+本仓库默认使用 **HTTP 优先** 桥接：
+
+| 方向 | 接口 | 说明 |
+|------|------|------|
+| 扩展 → 后端 | `POST /api/ext/hello` | 注册 session、上报 `flowKey`、领取 secret |
+| 扩展 → 后端 | `GET /api/ext/poll` | 拉取待执行命令（Bearer secret） |
+| 扩展 → 后端 | `POST /api/ext/callback` | 回传结果 / token / ready（Bearer secret） |
+| 后端 → 扩展 | 命令队列 | `send_message` 在 HTTP 模式下入队，由 poll 取走 |
+| 兼容 | `WS /ws` | `EXT_TRANSPORT=ws` 或 auto 失败时回退 |
+
+### 健康状态
+
+```bash
+curl http://127.0.0.1:8001/health
+```
+
+期望（HTTP 模式连通）：
+
+```json
+{
+  "status": "healthy",
+  "extension_connected": true,
+  "has_flow_key": true,
+  "transport": "http"
+}
+```
+
+> **连接定义：** 最近一次 hello/poll 在 TTL 内（默认 20s）且持有 flowKey，**不再**要求 WebSocket 对象存在。
+
+### 相关配置（`flow-agent/config.env`）
+
+```env
+EXT_TRANSPORT=auto
+EXT_SESSION_TTL_SEC=20
+EXT_POLL_INTERVAL_MS=1000
+ENABLE_EXTENSION_WS=1
+```
+
+### 加载扩展
+
+Chrome / 指纹浏览器扩展管理页 → 加载已解压扩展 → 选择：
+
+`F:\Code\Flow-Agent-New\flow-chrome-extension`
+
+然后打开 `https://labs.google/fx/tools/flow` 登录 Google，等待 token 捕获。
+
+---
+
 ## ✅ Features & Status
 
 | Feature | What it does | Time | Status |
@@ -73,7 +199,7 @@ pip install -e .
 2. Go to `chrome://extensions` in the address bar.
 3. Toggle **"Developer mode"** ON (top-right corner).
 4. Click **"Load unpacked"** (top-left).
-5. Select the `flow-chrome-extension/` folder from this repository.
+5. Select the `flow-chrome-extension/` folder from this repository（本机完整路径：`F:\Code\Flow-Agent-New\flow-chrome-extension`）。
 6. Open [labs.google/fx/tools/flow](https://labs.google/fx/tools/flow) and ensure you are logged in.
 7. The extension icon will show a green badge once it is connected to the backend.
 
@@ -245,20 +371,22 @@ asyncio.run(main())
 ## 📁 Project Structure
 
 ```
-flow/
-├── README.md                   # Home Page Documentation
-├── MCP.md                      # Detailed MCP Client configurations
-├── flow-chrome-extension/      # Chrome extension source
-└── flow-agent/                 # CLI & Python Backend
-    ├── cli/                    # CLI modules (generate, image, upload, edit, etc.)
-    ├── flow_cli/               # flow command line wrapper entrypoint
-    ├── flow_mcp_server.py      # MCP Server entrypoint
-    ├── omniflash/              # Core Python library modules
-    ├── config.env              # Environment config file
-    ├── setup.sh                # macOS/Linux autostart installer
-    ├── uninstall.sh            # macOS/Linux autostart uninstaller
-    ├── setup-windows.ps1       # Windows autostart installer
-    └── uninstall-windows.ps1   # Windows autostart uninstaller
+F:\Code\Flow-Agent-New\
+├── README.md                   # 本说明（含工作区迁移与改造入口）
+├── MCP.md                      # MCP Client configurations
+├── docs/
+│   └── superpowers/plans/      # 实现计划（HTTP 桥改造等）
+├── flow-chrome-extension/      # Chrome / 指纹浏览器插件源码
+├── flow-agent/                 # CLI & Python 后端
+│   ├── cli/                    # API / CLI modules
+│   ├── flow_cli/               # `flow` 命令入口
+│   ├── flow_mcp_server.py      # MCP Server
+│   ├── omniflash/              # 核心库（bridge、生成器等）
+│   ├── tests/                  # 后端测试
+│   ├── config.env              # 环境配置
+│   ├── setup-windows.ps1       # Windows 自启动
+│   └── ...
+└── release/                    # 预编译二进制（可选）
 ```
 
 ---
@@ -268,7 +396,12 @@ flow/
 ```mermaid
 graph TD
     A[AI Client / CLI / API] -- "MCP / API Connection" --> B[Flow Agent Backend]
-    B -- "WebSocket Bridge" --> C[Chrome Extension]
-    C -- "Browser Automation" --> D[Google Flow Website]
-    D -- "Success 🎉" --> E[Your Generated Media]
+    B -- "HTTP hello/poll/callback 优先<br/>WebSocket 兼容回退" --> C[Browser Extension]
+    C -- "Browser session + token" --> D[Google Flow Website]
+    D -- "Success" --> E[Generated Media]
 ```
+
+> 当前线上/源码默认仍以 WebSocket 为主；**进行中的改造**会把扩展桥切换为 HTTP 优先，计划见  
+> [`docs/superpowers/plans/2026-07-20-extension-http-bridge.md`](docs/superpowers/plans/2026-07-20-extension-http-bridge.md)。
+
+

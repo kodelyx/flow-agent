@@ -135,7 +135,32 @@
       flex-shrink: 0;
     }
 
-    #conn-dot.on {
+    
+#transport-status.transport {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.45);
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+#transport-status.transport.on {
+  color: #9ef0c2;
+  background: rgba(46, 204, 113, 0.14);
+}
+#transport-status.transport.http {
+  color: #8fd3ff;
+  background: rgba(52, 152, 219, 0.16);
+}
+#transport-status.transport.ws {
+  color: #ffd27f;
+  background: rgba(241, 196, 15, 0.16);
+}
+
+#conn-dot.on {
       background: var(--green);
       box-shadow: 0 0 8px 2px rgba(16, 185, 129, 0.4);
       animation: pulse-glow 2.5s ease-in-out infinite;
@@ -1023,6 +1048,7 @@
     <div id="conn-pill" title="Connection">
       <span id="conn-dot"></span>
     </div>
+    <span id="transport-status" class="transport">OFF</span>
     <div class="toggle-wrap">
       <span class="toggle-label" id="toggle-label">OFF</span>
       <label class="toggle">
