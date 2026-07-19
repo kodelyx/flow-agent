@@ -16,13 +16,12 @@ class Session:
     flow_key: str | None
     last_seen: float
     queue: deque = field(default_factory=deque)
-    seen_command_ids: set[str] = field(default_factory=set)
 
 
 class ExtensionHttpRegistry:
     """Thread-safe registry for extension HTTP sessions and command queues."""
 
-    def __init__(self, session_ttl_sec: float = 30.0) -> None:
+    def __init__(self, session_ttl_sec: float = 15.0) -> None:
         self._session_ttl_sec = float(session_ttl_sec)
         self._sessions: dict[str, Session] = {}
         self._lock = threading.Lock()
@@ -37,6 +36,7 @@ class ExtensionHttpRegistry:
         """Register or refresh a session."""
         now = time.monotonic()
         with self._lock:
+            self._purge_expired_unlocked(now)
             existing = self._sessions.get(session_id)
             if existing is not None:
                 existing.last_seen = now
@@ -57,6 +57,7 @@ class ExtensionHttpRegistry:
         """Refresh last_seen for an existing online session."""
         now = time.monotonic()
         with self._lock:
+            self._purge_expired_unlocked(now)
             session = self._get_online_unlocked(session_id, now)
             if session is None:
                 return False
@@ -67,6 +68,7 @@ class ExtensionHttpRegistry:
         """Return whether the given session (or any session) is online."""
         now = time.monotonic()
         with self._lock:
+            self._purge_expired_unlocked(now)
             if session_id is None:
                 return self._has_online_unlocked(now)
             return self._get_online_unlocked(session_id, now) is not None
@@ -79,10 +81,13 @@ class ExtensionHttpRegistry:
         Enqueue a command for a session.
 
         If session_id is None, deliver to the most recently seen online session.
-        Duplicate command ids for the same session are ignored (idempotent).
+        Duplicate command ids still present in the session queue are ignored
+        (in-flight/queue-only idempotency). After poll removes a command, the
+        same id may be enqueued again for business retries.
         """
         now = time.monotonic()
         with self._lock:
+            self._purge_expired_unlocked(now)
             session = self._resolve_target_unlocked(session_id, now)
             if session is None:
                 return False
@@ -90,9 +95,8 @@ class ExtensionHttpRegistry:
             cmd_id = command.get("id")
             if cmd_id is not None:
                 cmd_id_str = str(cmd_id)
-                if cmd_id_str in session.seen_command_ids:
+                if any(str(item.get("id")) == cmd_id_str for item in session.queue):
                     return True
-                session.seen_command_ids.add(cmd_id_str)
 
             session.queue.append(dict(command))
             return True
@@ -102,6 +106,7 @@ class ExtensionHttpRegistry:
         now = time.monotonic()
         max_n = max(0, int(max_commands))
         with self._lock:
+            self._purge_expired_unlocked(now)
             session = self._get_online_unlocked(session_id, now)
             if session is None:
                 return {"commands": [], "ok": False, "reason": "session_not_found"}
@@ -115,6 +120,7 @@ class ExtensionHttpRegistry:
         """Return flow_key for a session, or the most recently seen online session."""
         now = time.monotonic()
         with self._lock:
+            self._purge_expired_unlocked(now)
             if session_id is not None:
                 session = self._get_online_unlocked(session_id, now)
                 return None if session is None else session.flow_key
@@ -123,6 +129,15 @@ class ExtensionHttpRegistry:
 
     def _is_online_unlocked(self, session: Session, now: float) -> bool:
         return (now - session.last_seen) <= self._session_ttl_sec
+
+    def _purge_expired_unlocked(self, now: float) -> None:
+        expired = [
+            session_id
+            for session_id, session in self._sessions.items()
+            if not self._is_online_unlocked(session, now)
+        ]
+        for session_id in expired:
+            del self._sessions[session_id]
 
     def _get_online_unlocked(self, session_id: str, now: float) -> Session | None:
         session = self._sessions.get(session_id)
