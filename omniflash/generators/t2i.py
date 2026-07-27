@@ -144,11 +144,18 @@ async def generate_image(bridge, prompt: str, aspect: str, project_id: str,
         raise ValueError(err_msg)
 
     data = result.get("data", {})
+    client_id = result.get("_client_id")
     results = _parse_image_results(data)
 
     if not results:
         log.error("No images in response")
         return None
+
+    # Inject client_id into each result for history tracking
+    for r in results:
+        r["_model"] = target_model
+        if client_id:
+            r["_client_id"] = client_id
 
     credits = data.get("remainingCredits", "?")
     log.info("Generated! %d image(s), credits=%s", len(results), credits)

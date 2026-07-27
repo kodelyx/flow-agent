@@ -113,6 +113,11 @@ function updateStatus(data) {
   const dot = document.getElementById('conn-dot');
   dot.className = connected ? 'on' : '';
 
+  // Update header client ID
+  if (data.clientId) {
+    document.getElementById('header-client-id').textContent = data.clientId;
+  }
+
   // Toggle state
   const toggle = document.getElementById('main-toggle');
   const toggleLabel = document.getElementById('toggle-label');
@@ -462,4 +467,42 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchStatus();
   fetchLog();
   startTickers();
+
+  // Load custom settings
+  chrome.storage.local.get(['customServerIp', 'clientId'], (data) => {
+    if (data.customServerIp) {
+      document.getElementById('setting-server-ip').value = data.customServerIp;
+    }
+    if (data.clientId) {
+      document.getElementById('setting-client-id').value = data.clientId;
+      document.getElementById('header-client-id').textContent = data.clientId;
+    }
+  });
+
+  // Toggle settings section visibility on Client ID click
+  document.getElementById('header-client-id').addEventListener('click', () => {
+    const section = document.getElementById('settings-section');
+    if (section.style.display === 'none') {
+      section.style.display = 'flex';
+      section.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      section.style.display = 'none';
+    }
+  });
+
+  // Handle saving settings
+  document.getElementById('btn-save-settings').addEventListener('click', async () => {
+    const customServerIp = document.getElementById('setting-server-ip').value.trim();
+    const clientId = document.getElementById('setting-client-id').value.trim();
+
+    await chrome.storage.local.set({ customServerIp, clientId });
+    document.getElementById('header-client-id').textContent = clientId || '—';
+    toast('Settings saved! Reconnecting...', 'ok');
+
+    // Hide settings panel after saving
+    document.getElementById('settings-section').style.display = 'none';
+
+    // Notify background script to reconnect
+    chrome.runtime.sendMessage({ type: 'SETTINGS_UPDATED' });
+  });
 });

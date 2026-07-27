@@ -5,6 +5,8 @@
  * Captures bearer token, solves reCAPTCHA, proxies API calls through browser.
  */
 
+importScripts('config.js');
+
 const AGENT_WS_URL = 'ws://127.0.0.1:8001/ws';
 let callbackUrl = 'http://127.0.0.1:3001/api/ext/callback';
 // NOTE: This is a browser-restricted public API key — safe to ship in extension bundles.
@@ -15,6 +17,7 @@ let flowKey = null;
 let callbackSecret = null;  // Auth secret for HTTP callback, received from server on WS connect
 let state = 'off'; // off | idle | running
 let manualDisconnect = false;
+let extensionClientId = '';
 let metrics = {
   tokenCapturedAt: null,
   requestCount: 0,   // captcha-consuming requests only (gen image/video/upscale)
@@ -29,15 +32,15 @@ let metrics = {
 const _VISIBLE_TYPES = new Set(['GEN_IMG', 'GEN_VID', 'GEN_VID_REF', 'UPSCALE', 'TRACKING', 'URL_REFRESH']);
 
 function _classifyApiUrl(url) {
-  if (url.includes('uploadImage'))                     return 'UPLOAD';
-  if (url.includes('batchGenerateImages'))              return 'GEN_IMG';
-  if (url.includes('UpsampleVideo'))                   return 'UPSCALE';
-  if (url.includes('ReferenceImages'))                 return 'GEN_VID_REF';
-  if (url.includes('batchAsyncGenerateVideo'))          return 'GEN_VID';
-  if (url.includes('batchCheckAsync'))                  return 'POLL';
-  if (url.includes('upsampleImage'))                   return 'UPS_IMG';
-  if (url.includes('/media/'))                         return 'MEDIA';
-  if (url.includes('/credits'))                        return 'CREDITS';
+  if (url.includes('uploadImage')) return 'UPLOAD';
+  if (url.includes('batchGenerateImages')) return 'GEN_IMG';
+  if (url.includes('UpsampleVideo')) return 'UPSCALE';
+  if (url.includes('ReferenceImages')) return 'GEN_VID_REF';
+  if (url.includes('batchAsyncGenerateVideo')) return 'GEN_VID';
+  if (url.includes('batchCheckAsync')) return 'POLL';
+  if (url.includes('upsampleImage')) return 'UPS_IMG';
+  if (url.includes('/media/')) return 'MEDIA';
+  if (url.includes('/credits')) return 'CREDITS';
   return 'API';
 }
 
@@ -58,7 +61,7 @@ function updateRequestLog(id, updates) {
 }
 
 function broadcastRequestLog() {
-  chrome.runtime.sendMessage({ type: 'REQUEST_LOG_UPDATE', log: requestLog }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'REQUEST_LOG_UPDATE', log: requestLog }).catch(() => { });
 }
 
 // ─── Startup ────────────────────────────────────────────────
@@ -69,6 +72,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'reconnect') connectToAgent();
   if (alarm.name === 'keepAlive') keepAlive();
   if (alarm.name === 'flushOutbox') flushOutbox();
+  if (alarm.name === 'parkWorkTab') await parkWorkTab();
   if (alarm.name === 'token-refresh') {
     await captureTokenFromFlowTab();
   }
@@ -119,81 +123,166 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 
 let _openingFlowTab = false;
 
-async function captureTokenFromFlowTab() {
-  const tabs = await chrome.tabs.query({
-    url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
-  });
-  if (!tabs.length) {
-    if (_openingFlowTab) {
-      console.log('[Flow Agent] Flow tab already opening, skipping');
-      return;
+// ─── On-demand tab lifecycle ────────────────────────────────
+// Open the Flow tab only when real work needs it (token capture, captcha
+// solve), and park it (not close — closing the last tab in a profile's
+// window can take the window down too) at chrome://extensions/ a couple
+// minutes after the last use instead of leaving it open/reloading forever.
+const FLOW_TAB_URLS = ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'];
+const FLOW_URL = 'https://labs.google/fx/tools/flow';
+const PARK_URL = 'chrome://extensions/';
+const IDLE_PARK_MINUTES = 2;
+let workTabId = null;
+
+function isFlowUrl(url) {
+  return !!url && FLOW_TAB_URLS.some((p) => new RegExp(p.replace(/\./g, '\\.').replace(/\*/g, '.*')).test(url));
+}
+
+function scheduleParkAlarm() {
+  chrome.alarms.create('parkWorkTab', { delayInMinutes: IDLE_PARK_MINUTES });
+}
+
+async function parkWorkTab() {
+  if (!workTabId) return;
+  try {
+    const tab = await chrome.tabs.get(workTabId);
+    if (tab && !tab.url?.startsWith(PARK_URL)) {
+      await chrome.tabs.update(workTabId, { url: PARK_URL });
+      console.log('[Flow Agent] Idle — parked work tab at chrome://extensions/');
     }
-    _openingFlowTab = true;
+  } catch (e) {
+    workTabId = null; // tab was closed by the user
+  }
+}
+
+// Finds/wakes/creates the Flow tab and resets its idle-park timer. Returns
+// the tab, or null if it couldn't be opened.
+async function getOrOpenFlowTab() {
+  if (workTabId) {
     try {
-      console.log('[Flow Agent] No Flow tab found — opening one in background');
-      await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow', active: false });
-      await sleep(3000);
-      const retryTabs = await chrome.tabs.query({
-        url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
-      });
-      if (!retryTabs.length) {
-        console.log('[Flow Agent] Flow tab not ready yet after open');
-        return;
+      let tab = await chrome.tabs.get(workTabId);
+      if (tab && !isFlowUrl(tab.url)) {
+        await chrome.tabs.update(workTabId, { url: FLOW_URL });
+        await sleep(3000);
+        tab = await chrome.tabs.get(workTabId);
       }
-      await chrome.scripting.executeScript({
-        target: { tabId: retryTabs[0].id },
-        files: ['content.js'],
-      });
-      console.log('[Flow Agent] Token refresh triggered on newly opened Flow tab');
+      scheduleParkAlarm();
+      return tab;
     } catch (e) {
-      console.error('[Flow Agent] Token refresh failed after opening tab:', e);
-    } finally {
-      _openingFlowTab = false;
+      workTabId = null; // closed by the user — fall through and open fresh
     }
+  }
+
+  const tabs = await chrome.tabs.query({ url: FLOW_TAB_URLS });
+  if (tabs.length) {
+    workTabId = tabs[0].id;
+    scheduleParkAlarm();
+    return tabs[0];
+  }
+
+  await chrome.tabs.create({ url: FLOW_URL, active: false });
+  await sleep(3000);
+  const retryTabs = await chrome.tabs.query({ url: FLOW_TAB_URLS });
+  if (!retryTabs.length) return null;
+  workTabId = retryTabs[0].id;
+  scheduleParkAlarm();
+  return retryTabs[0];
+}
+
+// Token is considered fresh if it exists and was captured less than 50 minutes ago.
+// Google OAuth tokens expire after ~60 min, so 50 min gives a safe buffer.
+function isTokenFresh() {
+  if (!flowKey || !metrics.tokenCapturedAt) return false;
+  const ageMs = Date.now() - metrics.tokenCapturedAt;
+  return ageMs < 50 * 60 * 1000; // 50 minutes
+}
+
+async function captureTokenFromFlowTab() {
+  // Skip if token is still fresh — no need to open/refresh anything
+  if (isTokenFresh()) {
+    console.log('[Flow Agent] Token still fresh, skipping tab refresh');
     return;
   }
+
+  if (_openingFlowTab) {
+    console.log('[Flow Agent] Flow tab already opening, skipping');
+    return;
+  }
+  _openingFlowTab = true;
   try {
+    const tab = await getOrOpenFlowTab();
+    if (!tab) {
+      console.log('[Flow Agent] Flow tab not ready yet after open');
+      return;
+    }
     await chrome.scripting.executeScript({
-      target: { tabId: tabs[0].id },
+      target: { tabId: tab.id },
       files: ['content.js'],
     });
     console.log('[Flow Agent] Token refresh triggered on Flow tab');
   } catch (e) {
     console.error('[Flow Agent] Token refresh failed:', e);
+  } finally {
+    _openingFlowTab = false;
   }
 }
 
+
 // ─── WebSocket to Agent ─────────────────────────────────────
 
-function connectToAgent() {
+async function connectToAgent() {
   if (manualDisconnect) return;
   if (ws?.readyState === WebSocket.CONNECTING) return;
   if (ws?.readyState === WebSocket.OPEN) return;
 
+  const data = await chrome.storage.local.get(['customServerIp', 'clientId']);
+  const serverIp = data.customServerIp || CONFIG.DEFAULT_SERVER_HOST;
+  const isLocal = /^(127\.0\.0\.1|localhost|192\.168\.|10\.)/.test(serverIp);
+  const wsScheme = isLocal ? 'ws' : 'wss';
+  const httpScheme = isLocal ? 'http' : 'https';
+  const wsUrl = `${wsScheme}://${serverIp}/ws`;
+
+  // Dynamically resolve callbackUrl
+  callbackUrl = `${httpScheme}://${serverIp}/api/ext/callback`;
+
   try {
-    ws = new WebSocket(AGENT_WS_URL);
+    ws = new WebSocket(wsUrl);
   } catch (e) {
     console.error('[Flow Agent] WS connect error:', e);
     scheduleReconnect();
     return;
   }
 
-  ws.onopen = () => {
-    console.log('[Flow Agent] Connected to agent');
+  ws.onopen = async () => {
+    console.log('[Flow Agent] Connected to agent: ' + wsUrl);
     chrome.alarms.clear('reconnect');
     setState('idle');
 
     // Token refresh alarm — 45 min gives buffer before ~60 min expiry
     chrome.alarms.create('token-refresh', { periodInMinutes: 45 });
 
-    // Send current state + resend token if we have one
+    const storage = await chrome.storage.local.get(['clientId']);
+    let clientId = storage.clientId;
+    if (!clientId) {
+      const prefix = CONFIG.DEFAULT_CLIENT_ID_PREFIX || 'client';
+      clientId = `${prefix}-${Math.random().toString(36).substring(2, 8)}`;
+      await chrome.storage.local.set({ clientId });
+    }
+    extensionClientId = clientId;
+
+    // Send current state + resend token if we have one, along with clientId
     ws.send(JSON.stringify({
       type: 'extension_ready',
+      clientId: clientId,
       flowKeyPresent: !!flowKey,
       tokenAge: flowKey && metrics.tokenCapturedAt ? Date.now() - metrics.tokenCapturedAt : null,
     }));
     if (flowKey) {
-      ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+      ws.send(JSON.stringify({
+        type: 'token_captured',
+        clientId: clientId,
+        flowKey: flowKey
+      }));
     }
     // Backend is reachable again — push any responses queued while it was down.
     flushOutbox();
@@ -224,52 +313,71 @@ function connectToAgent() {
         });
       } else if (msg.method === 'open_flow_tab') {
         // Python bridge asks us to open/focus a Flow tab
-        console.log('[Flow Agent] Agent requested: open Flow tab');
-        const tabs = await chrome.tabs.query({
-          url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
-        });
-        if (tabs.length) {
-          // Tab exists — refresh it to trigger fresh API calls → token capture
-          await chrome.tabs.reload(tabs[0].id);
-          console.log('[Flow Agent] Refreshed existing Flow tab');
+        // If token is still fresh, just send it back — no need to open/reload
+        if (isTokenFresh()) {
+          console.log('[Flow Agent] open_flow_tab: token fresh, sending cached token');
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+          }
         } else {
-          // No tab — open one (active so it loads properly)
-          await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow', active: true });
-          console.log('[Flow Agent] Opened new Flow tab');
-        }
-        // Wait for page to load and make API calls that trigger token capture
-        await sleep(5000);
-        // If token was captured by webRequest during page load, send it
-        if (flowKey && ws?.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
-          console.log('[Flow Agent] Sent stored token after tab open');
-        } else {
-          // Try reading from storage as fallback
-          const data = await chrome.storage.local.get(['flowKey']);
-          if (data.flowKey) {
-            flowKey = data.flowKey;
-            if (ws?.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
-              console.log('[Flow Agent] Sent token from storage after tab open');
+          console.log('[Flow Agent] open_flow_tab: token missing/expired, opening tab');
+          const tabs = await chrome.tabs.query({
+            url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
+          });
+          if (tabs.length) {
+            await chrome.tabs.reload(tabs[0].id);
+            console.log('[Flow Agent] Refreshed existing Flow tab');
+          } else {
+            await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow', active: true });
+            console.log('[Flow Agent] Opened new Flow tab');
+          }
+          await sleep(5000);
+          if (flowKey && ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+            console.log('[Flow Agent] Sent token after tab open');
+          } else {
+            const data = await chrome.storage.local.get(['flowKey']);
+            if (data.flowKey) {
+              flowKey = data.flowKey;
+              if (ws?.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+                console.log('[Flow Agent] Sent token from storage after tab open');
+              }
             }
           }
         }
-      } else if (msg.method === 'refresh_flow_tab') {
-        // Python bridge asks us to refresh token
-        console.log('[Flow Agent] Agent requested: refresh token');
-        await captureTokenFromFlowTab();
-        await sleep(3000);
-        // Actively send token if we have one
-        if (flowKey && ws?.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
-          console.log('[Flow Agent] Sent token after refresh');
+      } else if (msg.method === 'refresh_flow_tab' || msg.method === 'force_refresh') {
+        // Python bridge asks us to refresh token.
+        // force_refresh (or an explicit msg.force) bypasses the freshness check:
+        // Google can invalidate a token via inactivity long before its 50-min
+        // age limit, so a "fresh" token may still be dead (401). In that case we
+        // must actually reload the tab and re-capture, not resend the cached one.
+        const force = msg.force === true || msg.method === 'force_refresh';
+        if (isTokenFresh() && !force) {
+          console.log('[Flow Agent] refresh_flow_tab: token fresh, sending cached token');
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+          }
         } else {
-          const data = await chrome.storage.local.get(['flowKey']);
-          if (data.flowKey) {
-            flowKey = data.flowKey;
-            if (ws?.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
-              console.log('[Flow Agent] Sent token from storage after refresh');
+          console.log('[Flow Agent] refresh_flow_tab: forcing tab reload + re-capture');
+          // Drop the stale token so captureTokenFromFlowTab can't short-circuit.
+          if (force) {
+            flowKey = null;
+            metrics.tokenCapturedAt = null;
+          }
+          await captureTokenFromFlowTab();
+          await sleep(3000);
+          if (flowKey && ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+            console.log('[Flow Agent] Sent token after refresh');
+          } else {
+            const data = await chrome.storage.local.get(['flowKey']);
+            if (data.flowKey) {
+              flowKey = data.flowKey;
+              if (ws?.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+                console.log('[Flow Agent] Sent token from storage after refresh');
+              }
             }
           }
         }
@@ -341,11 +449,11 @@ async function loadOutbox() {
   try {
     const { responseOutbox } = await chrome.storage.local.get('responseOutbox');
     if (responseOutbox && typeof responseOutbox === 'object') outbox = responseOutbox;
-  } catch {}
+  } catch { }
 }
 
 function persistOutbox() {
-  chrome.storage.local.set({ responseOutbox: outbox }).catch(() => {});
+  chrome.storage.local.set({ responseOutbox: outbox }).catch(() => { });
 }
 
 function enqueueResponse(msg) {
@@ -356,7 +464,11 @@ function enqueueResponse(msg) {
 
 async function deliverOnce(entry) {
   try {
-    const resp = await fetch(callbackUrl, {
+    const data = await chrome.storage.local.get(['customServerIp']);
+    const serverIp = data.customServerIp || CONFIG.DEFAULT_SERVER_HOST;
+    const targetCallbackUrl = `http://${serverIp}/api/ext/callback`;
+
+    const resp = await fetch(targetCallbackUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(entry.msg),
@@ -371,7 +483,7 @@ async function deliverOnce(entry) {
     // Network error: backend unreachable. Try WS as an immediate fallback but
     // keep the entry queued so a later flush can still deliver it.
     if (ws?.readyState === WebSocket.OPEN) {
-      try { ws.send(JSON.stringify(entry.msg)); } catch {}
+      try { ws.send(JSON.stringify(entry.msg)); } catch { }
     }
     return false;
   }
@@ -440,33 +552,12 @@ async function requestCaptchaFromTab(tabId, requestId, pageAction) {
 }
 
 async function solveCaptcha(requestId, captchaAction) {
-  const tabs = await chrome.tabs.query({
-    url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
-  });
-
-  if (!tabs.length) {
-    // Auto-open Flow tab and wait briefly before returning error
-    try {
-      await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow', active: false });
-      await sleep(3000);
-      // Retry tab query after opening
-      const retryTabs = await chrome.tabs.query({
-        url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
-      });
-      if (!retryTabs.length) return { error: 'NO_FLOW_TAB' };
-      const resp = await Promise.race([
-        requestCaptchaFromTab(retryTabs[0].id, requestId, captchaAction),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('CAPTCHA_TIMEOUT')), 30000)),
-      ]);
-      return resp;
-    } catch (e) {
-      return { error: e.message || 'NO_FLOW_TAB' };
-    }
-  }
+  const tab = await getOrOpenFlowTab();
+  if (!tab) return { error: 'NO_FLOW_TAB' };
 
   try {
     const resp = await Promise.race([
-      requestCaptchaFromTab(tabs[0].id, requestId, captchaAction),
+      requestCaptchaFromTab(tab.id, requestId, captchaAction),
       new Promise((_, rej) => setTimeout(() => rej(new Error('CAPTCHA_TIMEOUT')), 30000)),
     ]);
     return resp;
@@ -686,6 +777,17 @@ async function handleApiRequest(msg) {
       responseData = responseText;
     }
 
+    // Self-heal: a 401 means Google invalidated our cached token (usually via
+    // inactivity, before our 50-min freshness window). Drop it so the very next
+    // request / refresh forces a genuine tab reload + re-capture instead of
+    // resending the same dead token.
+    if (response.status === 401) {
+      console.warn('[Flow Agent] 401 UNAUTHENTICATED — invalidating cached token to force refresh');
+      flowKey = null;
+      metrics.tokenCapturedAt = null;
+      chrome.storage.local.set({ flowKey: null });
+    }
+
     sendToAgent({
       id,
       status: response.status,
@@ -726,10 +828,19 @@ function setState(newState) {
 }
 
 function broadcastStatus() {
-  chrome.runtime.sendMessage({ type: 'STATUS_PUSH' }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'STATUS_PUSH' }).catch(() => { });
 }
 
 chrome.runtime.onMessage.addListener((msg, _, reply) => {
+  if (msg.type === 'SETTINGS_UPDATED') {
+    if (ws) {
+      try { ws.close(); } catch { }
+    }
+    connectToAgent();
+    reply({ ok: true });
+    return true;
+  }
+
   if (msg.type === 'STATUS') {
     reply({
       connected: ws?.readyState === WebSocket.OPEN,
@@ -744,6 +855,7 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
         lastError: metrics.lastError,
       },
       state,
+      clientId: extensionClientId,
     });
   }
 
@@ -948,7 +1060,7 @@ async function sendTelemetry() {
         body: JSON.stringify(_buildFrontendEventsPayload()),
       });
     }
-  } catch {}
+  } catch { }
 }
 
 // Send telemetry at random intervals (45-120s) to look organic

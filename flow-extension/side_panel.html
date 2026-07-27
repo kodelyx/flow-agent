@@ -1023,15 +1023,36 @@
     <div id="conn-pill" title="Connection">
       <span id="conn-dot"></span>
     </div>
-    <div class="toggle-wrap">
-      <span class="toggle-label" id="toggle-label">OFF</span>
-      <label class="toggle">
-        <input type="checkbox" id="main-toggle">
-        <span class="toggle-track"></span>
-        <span class="toggle-thumb"></span>
-      </label>
+    <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; margin-left: auto;">
+      <div class="toggle-wrap" style="margin: 0;">
+        <span class="toggle-label" id="toggle-label">OFF</span>
+        <label class="toggle">
+          <input type="checkbox" id="main-toggle">
+          <span class="toggle-track"></span>
+          <span class="toggle-thumb"></span>
+        </label>
+      </div>
+      <span style="font-family: var(--mono); font-size: 10px; color: var(--muted); background: rgba(255,255,255,0.06); border: 1px solid var(--border); padding: 1px 5px; border-radius: 4px; font-weight: 500; text-transform: none; cursor: pointer; user-select: none;" id="header-client-id" title="Click to configure settings">—</span>
     </div>
   </header>
+
+  <!-- Settings Section (Hidden by default, toggled via clicking Client ID) -->
+  <section class="settings-section" id="settings-section" style="padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface); display: none; flex-direction: column; gap: 8px;">
+    <div style="font-weight: 800; font-size: 11px; text-transform: uppercase; color: var(--accent); letter-spacing: 0.05em; display: flex; align-items: center; gap: 6px;">
+      <span>⚙️</span> Multi-PC Configuration
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <label style="width: 75px; font-size: 11px; color: var(--text-dim); font-weight: 500;">Server Host:</label>
+        <input type="text" id="setting-server-ip" placeholder="127.0.0.1:8001" style="flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; color: var(--text); font-family: var(--mono); font-size: 11px; outline: none; transition: border-color 0.2s;">
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <label style="width: 75px; font-size: 11px; color: var(--text-dim); font-weight: 500;">Client ID:</label>
+        <input type="text" id="setting-client-id" placeholder="PC1-Browser1" style="flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; color: var(--text); font-family: var(--mono); font-size: 11px; outline: none; transition: border-color 0.2s;">
+      </div>
+      <button class="btn btn-primary" id="btn-save-settings" style="width: 100%; padding: 6px; font-size: 10px; font-weight: 700; text-transform: uppercase; cursor: pointer; border-radius: 6px; letter-spacing: 0.03em; margin-top: 2px;">Save &amp; Connect</button>
+    </div>
+  </section>
 
   <!-- Metrics -->
   <div class="metrics">
@@ -1104,11 +1125,11 @@
 
   <!-- Signature -->
   <div class="signature">
-    <a href="https://github.com/kodelyx/Flow-Agent-Studio" target="_blank">
+    <a href="https://github.com/kodelyx/flow-agent" target="_blank">
       <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:3px">
         <path
           d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z" />
-      </svg>Flow Agent</a> · built by <a href="https://github.com/kodelyx/Flow-Agent-Studio" target="_blank">kodelyx</a>
+      </svg>Flow Agent</a> · built by <a href="https://github.com/kodelyx" target="_blank">kodelyx</a>
   </div>
 
   <!-- Detail overlay -->

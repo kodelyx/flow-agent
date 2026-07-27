@@ -84,7 +84,7 @@ def main():
     parser.add_argument("--ref", "-r", nargs="+", metavar="IMAGE",
                         help="Reference image(s): file path or media_id")
     parser.add_argument("--project-id", "-p", default=DEFAULT_PROJECT)
-    parser.add_argument("--model", "-m", default="harbor_seal",
+    parser.add_argument("--model", "-m", default="gem_pix_2",
                         help="Image model to use (harbor_seal/lite, narwhal/standard, gem_pix_2/pro)")
     args = parser.parse_args()
     asyncio.run(run(args))

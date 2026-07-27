@@ -29,6 +29,8 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
+import omniflash.config
+
 
 def _api_base() -> str:
     host = os.environ.get("OPENAI_API_HOST", "127.0.0.1")
@@ -36,8 +38,39 @@ def _api_base() -> str:
     return f"http://{host}:{port}"
 
 
+def _ensure_backend():
+    url = f"{_api_base()}/health"
+    try:
+        with urllib.request.urlopen(url, timeout=2) as resp:
+            if resp.status == 200:
+                return True
+    except Exception:
+        pass
+    import subprocess, time
+    print("[flow] Backend not running. Auto-starting backend server...")
+    try:
+        if getattr(sys, 'frozen', False):
+            cmd = [sys.executable, "serve"]
+        else:
+            cmd = [sys.executable, os.path.abspath(__file__), "serve"]
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for _ in range(15):
+            time.sleep(1)
+            try:
+                with urllib.request.urlopen(url, timeout=1) as resp:
+                    if resp.status == 200:
+                        print("[flow] Backend server auto-started successfully!")
+                        return True
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[flow] Auto-start backend failed: {e}", file=sys.stderr)
+    return False
+
+
 def _forward(module_main, argv):
     """Run an existing cli.* main() with a rewritten argv."""
+    _ensure_backend()
     saved = sys.argv
     sys.argv = [saved[0]] + argv
     try:
@@ -65,6 +98,7 @@ def cmd_serve(argv):
 def cmd_credits(argv):
     parser = argparse.ArgumentParser(prog="flow credits", description="Show remaining Google Flow credits.")
     parser.parse_args(argv)
+    _ensure_backend()
     url = f"{_api_base()}/v1/credits"
     try:
         with urllib.request.urlopen(url, timeout=15) as resp:
@@ -78,6 +112,7 @@ def cmd_credits(argv):
 def cmd_status(argv):
     parser = argparse.ArgumentParser(prog="flow status", description="Check whether the backend is running.")
     parser.parse_args(argv)
+    _ensure_backend()
     url = f"{_api_base()}/health"
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:

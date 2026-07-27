@@ -2,6 +2,9 @@
 media-id.js
 output/
 *.log
+github-token
+cloudflared/
+config.env
 
 # Python
 __pycache__/

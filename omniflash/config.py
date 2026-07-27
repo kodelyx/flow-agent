@@ -48,10 +48,10 @@ IMAGE_MODELS = {
     "pro": "GEM_PIX_2",
 }
 
-DEFAULT_IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "HARBOR_SEAL")
+DEFAULT_IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "GEM_PIX_2")
 if DEFAULT_IMAGE_MODEL not in IMAGE_MODELS.values():
     # If the env var is one of the keys, resolve it
-    DEFAULT_IMAGE_MODEL = IMAGE_MODELS.get(DEFAULT_IMAGE_MODEL.lower(), "HARBOR_SEAL")
+    DEFAULT_IMAGE_MODEL = IMAGE_MODELS.get(DEFAULT_IMAGE_MODEL.lower(), "GEM_PIX_2")
 
 
 # ─── Hardcoded constants (never change) ──────────────────────

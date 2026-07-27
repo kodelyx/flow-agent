@@ -17,7 +17,7 @@ import urllib.request
 from typing import List, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Security, Depends, Query, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, HTTPException, Security, Depends, Query, Header, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from omniflash import ExtensionBridge, DEFAULT_PROJECT
+from omniflash.bridge import target_client_id_var
 from omniflash.config import CREDITS_PER_VIDEO
 from omniflash.generators.t2i import generate_image, download_image, _parse_image_results
 
@@ -35,8 +36,10 @@ log = logging.getLogger("omniflash.openai_api")
 
 # Directories
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(ROOT_DIR, "output"))
+OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(os.getcwd(), "output"))
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+INPUT_DIR = os.environ.get("INPUT_DIR", os.path.join(os.getcwd(), "input"))
+os.makedirs(INPUT_DIR, exist_ok=True)
 
 PUBLIC_BASE_URL = os.environ.get(
     "PUBLIC_BASE_URL", "http://localhost:8001"
@@ -186,7 +189,7 @@ def map_size_to_aspect(size_str: Optional[str]) -> str:
 # OpenAI Request/Response Models
 class ImageGenerationRequest(BaseModel):
     prompt: str = Field(..., description="The prompt to generate images from")
-    model: str = Field("narwhal", description="Image model name (e.g. narwhal, gem_pix_2, imagen_4)")
+    model: str = Field("gem_pix_2", description="Image model name (default: gem_pix_2/pro)")
     n: int = Field(1, ge=1, le=20, description="Number of images to generate (1-20)")
     size: str = Field("1024x1024", description="Image dimensions (e.g. 1024x1024, 1024x1792, etc.)")
     response_format: str = Field("url", description="The format in which the generated images are returned (url or b64_json)")
@@ -243,8 +246,9 @@ async def list_models():
 
 
 @app.post("/v1/images/generations", dependencies=[Depends(verify_api_key)])
-async def openai_generate_image(req: ImageGenerationRequest):
+async def openai_generate_image(req: ImageGenerationRequest, x_client_id: Optional[str] = Header(None, alias="X-Client-Id")):
     """Generate images from a prompt (OpenAI Spec)."""
+    target_client_id_var.set(x_client_id)
     active_bridge = await get_active_bridge()
     aspect = map_size_to_aspect(req.size)
     project_id = os.environ.get("DEFAULT_PROJECT", DEFAULT_PROJECT)
@@ -377,14 +381,24 @@ async def openai_generate_image(req: ImageGenerationRequest):
 
 
 @app.post("/v1/videos/generations", dependencies=[Depends(verify_api_key)])
-async def openai_generate_video(req: VideoGenerationRequest):
+async def openai_generate_video(req: VideoGenerationRequest, x_client_id: Optional[str] = Header(None, alias="X-Client-Id")):
     """Generate videos from a prompt (and optional start image)."""
+    target_client_id_var.set(x_client_id)
     active_bridge = await get_active_bridge()
     project_id = os.environ.get("DEFAULT_PROJECT", DEFAULT_PROJECT)
 
     # Credit gate: only allow as many videos as the balance can afford.
     requested_n = req.n
     cost_each = CREDITS_PER_VIDEO.get(req.duration, 15)
+
+    # Pin one client that can actually afford this video (free before pro,
+    # richest-affordable first) so the credit check and the generation both run
+    # on the SAME browser instead of a random one that might be broke.
+    if not x_client_id:
+        chosen = active_bridge._select_client_for_cost(cost_each)
+        if chosen:
+            target_client_id_var.set(chosen)
+
     try:
         cred_res = await active_bridge.api_request("/v1/credits", body=None, captcha_action=None, method="GET")
         cred_data = cred_res.get("data", cred_res) if isinstance(cred_res, dict) else {}
@@ -726,6 +740,33 @@ async def upload_file_endpoint(req: UploadRequest):
 async def append_to_history(type_str: str, url: str, prompt: str, media_id: str = None, r2_key: str = None):
     """Record a generation. Uses history.json."""
     _append_history_file(type_str, url, prompt, media_id)
+    _append_input_file(type_str, prompt, media_id)
+
+
+def _append_input_file(type_str: str, prompt: str, media_id: str = None):
+    """Save the request input alongside its media_id in input/input.json."""
+    input_file = os.path.join(INPUT_DIR, "input.json")
+    client_id = target_client_id_var.get()
+    data = {"inputs": []}
+    if os.path.exists(input_file):
+        try:
+            with open(input_file, "r") as f:
+                data = json.load(f)
+        except Exception:
+            pass
+    data["inputs"].insert(0, {
+        "type": type_str,
+        "prompt": prompt,
+        "media_id": media_id,
+        "client_id": client_id,
+        "timestamp": int(time.time()),
+    })
+    data["inputs"] = data["inputs"][:100]
+    try:
+        with open(input_file, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
 
 
 def _append_history_file(type_str: str, url: str, prompt: str, media_id: str = None):
@@ -861,20 +902,84 @@ async def download_file(filename: str):
 
 
 @app.get("/v1/credits", dependencies=[Depends(verify_api_key)])
-async def get_flow_credits():
+async def get_flow_credits(x_client_id: Optional[str] = Header(None, alias="X-Client-Id")):
+    """Credits for connected Chrome clients.
+
+    - With an X-Client-Id header: returns just that client's credits.
+    - Without it: queries every connected client and returns per-client
+      breakdown plus the cumulative pool across all browsers.
+    """
     active_bridge = await get_active_bridge()
-    try:
-        res = await active_bridge.api_request("/v1/credits", body=None, captcha_action=None, method="GET")
-        if isinstance(res, dict):
-            if res.get("status", 200) != 200:
-                raise HTTPException(status_code=res.get("status", 500), detail=str(res.get("error", "API error")))
-            if "data" in res:
-                return res["data"]
-        return res
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    # Specific client requested → return only that one.
+    if x_client_id:
+        try:
+            res = await active_bridge.api_request(
+                "/v1/credits", body=None, captcha_action=None, method="GET",
+                client_id=x_client_id,
+            )
+            return res
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # Otherwise fan out across all connected clients.
+    client_ids = list(active_bridge._clients.keys())
+    if not client_ids:
+        raise HTTPException(status_code=503, detail="No extensions connected")
+
+    async def _one(cid):
+        try:
+            res = await active_bridge.api_request(
+                "/v1/credits", body=None, captcha_action=None, method="GET",
+                client_id=cid,
+            )
+            data = res.get("data", {}) if isinstance(res, dict) else {}
+            return {
+                "client_id": cid,
+                "credits": int(data.get("credits", 0)),
+                "tier": data.get("userPaygateTier"),
+                "sku": data.get("sku"),
+                "ok": res.get("status") == 200,
+            }
+        except Exception as e:
+            return {"client_id": cid, "credits": 0, "ok": False, "error": str(e)}
+
+    clients = await asyncio.gather(*[_one(cid) for cid in client_ids])
+    total = sum(c["credits"] for c in clients if c.get("ok"))
+    return {
+        "total_credits": total,
+        "client_count": len(clients),
+        "clients": clients,
+    }
+
+
+@app.post("/v1/refresh-tokens", dependencies=[Depends(verify_api_key)])
+async def refresh_tokens(x_client_id: Optional[str] = Header(None, alias="X-Client-Id")):
+    """Ask token-less clients to open/refresh their Flow tab so a token gets
+    captured. With X-Client-Id only that client is nudged; without it, every
+    connected client that currently has no token is nudged."""
+    active_bridge = await get_active_bridge()
+
+    if x_client_id:
+        targets = [x_client_id]
+    else:
+        targets = [cid for cid in active_bridge._clients
+                   if not active_bridge._tokens.get(cid)]
+
+    if not targets:
+        return {"nudged": 0, "clients": [], "detail": "All connected clients already have tokens"}
+
+    async def _nudge(cid):
+        try:
+            await active_bridge.send_message_to(cid, {"method": "open_flow_tab"})
+            await asyncio.sleep(6)
+            await active_bridge.send_message_to(cid, {"method": "refresh_flow_tab"})
+            return {"client_id": cid, "ok": True}
+        except Exception as e:
+            return {"client_id": cid, "ok": False, "error": str(e)}
+
+    results = await asyncio.gather(*[_nudge(cid) for cid in targets])
+    return {"nudged": len(results), "clients": results}
 
 
 @app.get("/")
