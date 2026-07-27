@@ -16,6 +16,7 @@ class ImageGenerationRequest(BaseModel):
     user: Optional[str] = None
     image_base64: Optional[str] = Field(None, description="Optional base64 reference image for image-to-image")
     ref_media_ids: Optional[List[str]] = Field(None, description="Optional reference image media IDs (up to 10)")
+    seed: Optional[int] = Field(None, ge=0, le=4294967295, description="Optional explicit generation seed")
 
 
 class VideoGenerationRequest(BaseModel):
@@ -28,6 +29,8 @@ class VideoGenerationRequest(BaseModel):
     start_media_id: Optional[str] = Field(None, description="Optional pre-uploaded start image or video media ID")
     end_media_id: Optional[str] = Field(None, description="Optional pre-uploaded end image media ID (requires start_media_id or image_base64)")
     is_video: Optional[bool] = Field(False, description="True if the pre-uploaded reference is a video")
+    seed: Optional[int] = Field(None, ge=0, le=4294967295, description="Optional explicit generation seed")
+    video_model: Optional[str] = Field(None, description="Optional Flow videoModelKey override")
 
 
 class GeneratedMedia(BaseModel):
