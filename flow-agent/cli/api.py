@@ -1024,10 +1024,17 @@ async def sse_endpoint(request: Request):
             yield f"event: endpoint\ndata: {endpoint_url}\n\n"
 
             while True:
-                message = await queue.get()
+                if await request.is_disconnected():
+                    log.info(f"[MCP SSE] Client disconnected: {session_id}")
+                    break
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    # Keeps the connection warm through proxies and lets the
+                    # disconnect check above run at least once per second.
+                    yield ": keepalive\n\n"
+                    continue
                 yield f"event: message\ndata: {json.dumps(message)}\n\n"
-        except asyncio.CancelledError:
-            log.info(f"[MCP SSE] Client session cancelled: {session_id}")
         finally:
             if session_id in SSE_CLIENTS:
                 del SSE_CLIENTS[session_id]
