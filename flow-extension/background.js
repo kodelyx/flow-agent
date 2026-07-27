@@ -99,9 +99,6 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'keepAlive') keepAlive();
   if (alarm.name === 'flushOutbox') flushOutbox();
   if (alarm.name === 'closeIdleFlowTab') await closeIdleFlowTab();
-  if (alarm.name === 'token-refresh') {
-    await captureTokenFromFlowTab();
-  }
 });
 
 async function init() {
@@ -121,9 +118,10 @@ async function init() {
   if (Array.isArray(data.requestLog)) requestLog = data.requestLog.slice(0, 100);
   await loadOutbox();
   connectToAgent();
-  chrome.alarms.create('keepAlive', { periodInMinutes: 0.4 });
+  // 0.5 min is Chrome's minimum alarm period — anything lower is silently clamped.
+  chrome.alarms.create('keepAlive', { periodInMinutes: 0.5 });
   // Retry any responses left undelivered by a previous worker lifetime.
-  chrome.alarms.create('flushOutbox', { periodInMinutes: 0.25 });
+  chrome.alarms.create('flushOutbox', { periodInMinutes: 0.5 });
   flushOutbox();
 }
 
@@ -177,6 +175,10 @@ function scheduleFlowTabClose() {
 
 async function closeIdleFlowTab() {
   if (!workTabId || !workTabCreatedByExtension) return;
+  if (state === 'running') {
+    scheduleFlowTabClose();
+    return;
+  }
   const tabId = workTabId;
   workTabId = null;
   workTabCreatedByExtension = false;
@@ -304,9 +306,6 @@ async function connectToAgent() {
     console.log('[Flow Agent] Connected to agent: ' + wsUrl);
     chrome.alarms.clear('reconnect');
     setState('idle');
-
-    // Token refresh alarm — 45 min gives buffer before ~60 min expiry
-    chrome.alarms.create('token-refresh', { periodInMinutes: 45 });
 
     const storage = await chrome.storage.local.get(['clientId']);
     let clientId = storage.clientId;
@@ -447,7 +446,6 @@ async function connectToAgent() {
 
   ws.onclose = () => {
     setState('off');
-    chrome.alarms.clear('token-refresh');
     if (!manualDisconnect) scheduleReconnect();
   };
 
@@ -459,7 +457,7 @@ async function connectToAgent() {
 }
 
 function scheduleReconnect() {
-  chrome.alarms.create('reconnect', { delayInMinutes: 0.083 }); // ~5s
+  chrome.alarms.create('reconnect', { delayInMinutes: 0.5 });
 }
 
 function keepAlive() {
@@ -641,11 +639,7 @@ async function handleTrpcRequest(msg) {
   }
 
   setState('running');
-  // TRPC calls don't consume captcha — don't count in metrics
-
-  const logId = id;
-  const logType = url.includes('createProject') ? 'CREATE_PROJECT' : 'TRPC';
-  // TRPC calls are silent — don't show in request log
+  // TRPC calls don't consume captcha and are silent — no metrics, no request log.
 
   const fetchHeaders = { 'Content-Type': 'application/json', ...headers };
   if (flowKey) {
@@ -660,13 +654,9 @@ async function handleTrpcRequest(msg) {
       credentials: 'include',
     });
     const data = await resp.json();
-    chrome.storage.local.set({ metrics });
-    updateRequestLog(logId, { status: 'success' });
     sendToAgent({ id, status: resp.status, data });
   } catch (e) {
     console.error('[Flow Agent] tRPC request failed:', e);
-    chrome.storage.local.set({ metrics });
-    updateRequestLog(logId, { status: 'failed', error: e.message || 'TRPC_FETCH_FAILED' });
     sendToAgent({ id, error: e.message || 'TRPC_FETCH_FAILED' });
   } finally {
     setState('idle');

@@ -8,57 +8,12 @@ window.__FLOW_AGENT_MAIN_INJECTED__ = true;
 
 const SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
 
-// ─── XHR Interceptor (for file uploads) ─────────────────────
-const _xhrOpen = XMLHttpRequest.prototype.open;
-const _xhrSend = XMLHttpRequest.prototype.send;
-XMLHttpRequest.prototype.open = function (method, url, ...rest) {
-  this.__sniffUrl = url;
-  this.__sniffMethod = method;
-  return _xhrOpen.call(this, method, url, ...rest);
-};
-XMLHttpRequest.prototype.send = function (body) {
-  try {
-    const url = this.__sniffUrl || '';
-    if (url.includes('googleapis.com') || url.includes('labs.google') || url.includes('storage.google')) {
-      window.postMessage({
-        type: '__FLOWKIT_SNIFF__',
-        url,
-        body: typeof body === 'string' ? body : `(binary ${body?.size || body?.byteLength || '?'} bytes)`,
-        method: this.__sniffMethod || 'POST',
-      }, '*');
-    }
-  } catch {}
-  return _xhrSend.call(this, body);
-};
-
 // ─── TRPC Response Monitor ─────────────────────────────────
 // Monkey-patch fetch to intercept TRPC responses containing media URLs.
 // Fresh signed GCS URLs are extracted and forwarded to the agent.
 
 const _originalFetch = window.fetch;
 window.fetch = async function (...args) {
-  try {
-    const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
-
-    // ─── SNIFF ALL outgoing requests (catch upload) ─────────
-    {
-      let bodyText = '';
-      if (args[1]?.body) {
-        const b = args[1].body;
-        if (typeof b === 'string') bodyText = b.length > 5000 ? b.slice(0, 200) + `...(${b.length} chars)` : b;
-        else if (b instanceof FormData) bodyText = `(FormData: ${[...b.keys()].join(', ')})`;
-        else if (b instanceof Blob) bodyText = `(Blob ${b.size} bytes, type=${b.type})`;
-        else if (b instanceof ArrayBuffer) bodyText = `(ArrayBuffer ${b.byteLength} bytes)`;
-        else if (b instanceof ReadableStream) bodyText = '(ReadableStream)';
-        else bodyText = JSON.stringify(b)?.slice(0, 2000) || '(unknown)';
-      }
-      window.postMessage({
-        type: '__FLOWKIT_SNIFF__',
-        url, body: bodyText, method: args[1]?.method || 'GET',
-      }, '*');
-    }
-  } catch {}
-
   const response = await _originalFetch.apply(this, args);
   try {
     const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';

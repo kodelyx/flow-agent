@@ -445,6 +445,10 @@
     .media-head strong { display:block; font-size:14px; }
     .media-head small { color:var(--muted); }
     #refresh-media { border:1px solid var(--border); border-radius:8px; padding:6px 9px; background:#fff; color:var(--text-dim); font:700 9px var(--font); cursor:pointer; }
+    .media-actions { display:flex; gap:6px; }
+    #delete-media { border:1px solid rgba(255,59,48,.25); border-radius:8px; padding:6px 9px; background:#fff; color:var(--red); font:700 9px var(--font); cursor:pointer; }
+    #delete-media:hover { background:rgba(255,59,48,.06); }
+    #delete-media:disabled { opacity:.5; cursor:wait; }
     .media-grid { display:grid; grid-template-columns:1fr; gap:12px; padding:0 14px 14px; }
     .media-item { overflow:hidden; border:1px solid var(--border); border-radius:12px; background:#fff; box-shadow:0 5px 18px rgba(15,23,42,.06); }
     .media-item img,.media-item video { display:block; width:100%; max-height:280px; aspect-ratio:16/9; object-fit:cover; background:#eef1f5; }
@@ -508,7 +512,7 @@
   </div></section>
 
   <section class="tab-panel" id="panel-media">
-    <div class="media-head"><div><strong>Media library</strong><small>Backend and extension generations</small></div><button id="refresh-media">Refresh</button></div>
+    <div class="media-head"><div><strong>Media library</strong><small>Backend and extension generations</small></div><div class="media-actions"><button id="refresh-media">Refresh</button><button id="delete-media" class="danger">Delete all</button></div></div>
     <div class="media-grid" id="media-grid"><div class="media-empty">Loading media…</div></div>
   </section>
 

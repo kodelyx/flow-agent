@@ -42,6 +42,13 @@ function escHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+// Media URLs come from the backend, so only allow schemes that are safe to
+// drop into an href/src — a `javascript:` URL would otherwise be clickable.
+function safeUrl(raw) {
+  const url = String(raw || '').trim();
+  return /^(https?|blob|data):/i.test(url) ? url : '';
+}
+
 function badgeHtml(status) {
   if (status === 'COMPLETED' || status === 'success') {
     return '<span class="badge badge-ok">&#10003; done</span>';
@@ -143,7 +150,8 @@ async function loadMedia() {
       return;
     }
     grid.innerHTML = items.map((item) => {
-      const rawUrl = String(item.url || '');
+      const rawUrl = safeUrl(item.url);
+      if (!rawUrl) return '';
       const url = escHtml(rawUrl.replace(/^http:\/\/(localhost|127\.0\.0\.1):8001/i, base));
       const prompt = escHtml(item.prompt || 'Generated media');
       const preview = item.type === 'video'
@@ -161,6 +169,7 @@ async function loadMedia() {
 }
 
 let monitorEnabled = false;
+let wasConnected = false;
 function runtimeMessage(payload) {
   return new Promise((resolve, reject) => chrome.runtime.sendMessage(payload, (response) => {
     if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
@@ -194,8 +203,13 @@ async function refreshMonitor() {
     const age = status.tokenAge == null ? null : Math.round(status.tokenAge / 60000);
     document.getElementById('monitor-token').textContent = status.flowKeyPresent ? `Token ${age || 0}m` : 'No token';
     document.getElementById('monitor-client').textContent = (status.clientId || '—').replace(/^client-/, '');
+    // Credits cost a real backend round-trip, so only fetch them when the
+    // connection actually comes back up — not on every status tick.
+    if (connected && !wasConnected) refreshQuickStatus();
+    wasConnected = connected;
   } catch {
     document.getElementById('monitor-state').textContent = 'Extension offline';
+    wasConnected = false;
   }
 }
 
@@ -227,13 +241,28 @@ document.getElementById('save-settings').addEventListener('click', async () => {
   await chrome.storage.local.set({ clientId: document.getElementById('setting-client').value.trim() });
   chrome.runtime.sendMessage({ type: 'SETTINGS_UPDATED' });
   selectTab('create');
-  refreshQuickStatus();
+  // New client id means a different balance — re-arm so the next tick refetches
+  // once the reconnect has actually landed.
+  wasConnected = false;
 });
 
 document.getElementById('clear-history').addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'CLEAR_REQUEST_LOG' }, () => renderLog([]));
 });
 document.getElementById('refresh-media').addEventListener('click', loadMedia);
+document.getElementById('delete-media').addEventListener('click', async () => {
+  const button = document.getElementById('delete-media');
+  button.disabled = true;
+  try {
+    await apiJson('/v1/history', { method: 'DELETE' });
+    showToast('All media deleted');
+    loadMedia();
+  } catch (error) {
+    showToast(`Delete failed: ${error.message}`, 'error');
+  } finally {
+    button.disabled = false;
+  }
+});
 
 chrome.runtime.sendMessage({ type: 'REQUEST_LOG' }, (data) => {
   if (chrome.runtime.lastError) return;
@@ -242,10 +271,7 @@ chrome.runtime.sendMessage({ type: 'REQUEST_LOG' }, (data) => {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'REQUEST_LOG_UPDATE' && message.log) renderLog(message.log);
-  if (message.type === 'STATUS_PUSH') {
-    refreshMonitor();
-    refreshQuickStatus();
-  }
+  if (message.type === 'STATUS_PUSH') refreshMonitor();
 });
 
 // ── Quick generation ────────────────────────────────────────
@@ -278,7 +304,23 @@ async function apiJson(path, options = {}) {
   return data;
 }
 
+// Credits come back in two shapes: a single client's response
+// ({data:{credits}}) or, when no client id is known yet, the pooled
+// fan-out across every connected browser ({total_credits}).
+function parseCredits(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  const candidates = [payload.data?.credits, payload.credits, payload.total_credits];
+  for (const value of candidates) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+let creditsInFlight = false;
 async function refreshQuickStatus() {
+  if (creditsInFlight) return;
+  creditsInFlight = true;
   const credits = document.getElementById('quick-credits');
   try {
     let creditData;
@@ -288,13 +330,17 @@ async function refreshQuickStatus() {
       console.warn('[Flow Agent] Background credits failed, trying direct API:', backgroundError);
       creditData = await apiJson('/v1/credits');
     }
-    const balance = creditData.data?.credits ?? creditData.credits ?? '—';
+    const balance = parseCredits(creditData);
+    if (balance == null) throw new Error('Credits missing from response');
     credits.textContent = String(balance);
     credits.title = `Current client credits: ${balance}`;
   } catch (error) {
-    credits.textContent = 'ERR';
-    credits.title = error.message;
+    // A transient failure shouldn't wipe a known-good balance off the UI.
+    if (!/^\d+$/.test(credits.textContent)) credits.textContent = '—';
+    credits.title = `Credits unavailable: ${error.message}`;
     console.error('[Flow Agent] Credits unavailable:', error);
+  } finally {
+    creditsInFlight = false;
   }
 }
 
@@ -391,11 +437,12 @@ document.getElementById('quick-generate').addEventListener('click', async () => 
       },
     });
     if (item.url) {
-      const safeUrl = escHtml(item.url);
+      const safeHref = safeUrl(item.url);
+      const safeUrlAttr = escHtml(safeHref);
       const preview = type === 'image'
-        ? `<img class="result-preview" src="${safeUrl}" alt="Generated image">`
-        : `<video class="result-preview" src="${safeUrl}" controls preload="metadata"></video>`;
-      result.innerHTML = `<div class="result-card">${preview}<div class="result-meta"><strong>Generation ready</strong><a class="result-open" href="${safeUrl}" target="_blank" rel="noreferrer">View</a></div></div>`;
+        ? `<img class="result-preview" src="${safeUrlAttr}" alt="Generated image">`
+        : `<video class="result-preview" src="${safeUrlAttr}" controls preload="metadata"></video>`;
+      result.innerHTML = `<div class="result-card">${preview}<div class="result-meta"><strong>Generation ready</strong><a class="result-open" href="${safeUrlAttr}" target="_blank" rel="noreferrer">View</a></div></div>`;
     } else {
       result.textContent = 'Done. Check Flow history for the result.';
     }
@@ -410,6 +457,5 @@ document.getElementById('quick-generate').addEventListener('click', async () => 
 });
 
 updateQuickFields();
-refreshQuickStatus();
 refreshMonitor();
 setInterval(refreshMonitor, 3000);
