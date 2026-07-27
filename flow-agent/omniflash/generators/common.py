@@ -18,6 +18,20 @@ from ..config import (
 log = logging.getLogger("omniflash.generators")
 
 
+def resolve_seed(seed: int | None, index: int = 0) -> int:
+    """Resolve the seed for one request item.
+
+    An explicit seed makes a generation reproducible, which is what lets a shot
+    be re-rolled while holding its look. Items in a multi-variation batch are
+    offset by their index so the takes still differ from each other but stay
+    reproducible as a set. None keeps the original behaviour: a fresh random
+    seed per request.
+    """
+    if seed is None:
+        return random.randint(1, 9999)
+    return (int(seed) + index) % 4294967296
+
+
 def build_client_context(project_id: str) -> dict:
     """Build the clientContext dict used by all API requests."""
     return {
