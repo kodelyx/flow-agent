@@ -218,16 +218,13 @@ document.getElementById('refresh-token').addEventListener('click', async () => {
     setTimeout(refreshMonitor, 500);
   }
 });
-chrome.storage.local.get(['customServerIp', 'clientId'], (data) => {
-  document.getElementById('setting-server').value = data.customServerIp || CONFIG.DEFAULT_SERVER_HOST;
+chrome.storage.local.get(['clientId'], (data) => {
+  document.getElementById('setting-server').value = CONFIG.DEFAULT_SERVER_HOST;
   document.getElementById('setting-client').value = data.clientId || '';
 });
 
 document.getElementById('save-settings').addEventListener('click', async () => {
-  await chrome.storage.local.set({
-    customServerIp: document.getElementById('setting-server').value.trim(),
-    clientId: document.getElementById('setting-client').value.trim(),
-  });
+  await chrome.storage.local.set({ clientId: document.getElementById('setting-client').value.trim() });
   chrome.runtime.sendMessage({ type: 'SETTINGS_UPDATED' });
   selectTab('create');
   refreshQuickStatus();
@@ -250,14 +247,10 @@ chrome.runtime.onMessage.addListener((message) => {
 // ── Quick generation ────────────────────────────────────────
 
 function getBackendBase() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(['customServerIp'], (data) => {
-      const raw = String(data.customServerIp || CONFIG.DEFAULT_SERVER_HOST).trim().replace(/\/$/, '');
-      if (/^https?:\/\//i.test(raw)) return resolve(raw);
-      const local = /^(localhost|127\.0\.0\.1)(:|$)/i.test(raw);
-      resolve(`${local ? 'http' : 'https'}://${raw}`);
-    });
-  });
+  const raw = String(CONFIG.DEFAULT_SERVER_HOST).trim().replace(/\/$/, '');
+  if (/^https?:\/\//i.test(raw)) return Promise.resolve(raw);
+  const local = /^(localhost|127\.0\.0\.1)(:|$)/i.test(raw);
+  return Promise.resolve(`${local ? 'http' : 'https'}://${raw}`);
 }
 
 async function apiJson(path, options = {}) {

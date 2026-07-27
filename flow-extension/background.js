@@ -103,6 +103,7 @@ async function init() {
       console.warn('[Flow Agent] Side Panel click behavior unavailable:', error.message);
     }
   }
+  await chrome.storage.local.remove('customServerIp');
   const data = await chrome.storage.local.get(['flowKey', 'metrics', 'callbackSecret', 'callbackUrl', 'requestLog']);
   if (data.flowKey) flowKey = data.flowKey;
   if (data.metrics) Object.assign(metrics, data.metrics);
@@ -269,8 +270,8 @@ async function connectToAgent() {
   if (ws?.readyState === WebSocket.CONNECTING) return;
   if (ws?.readyState === WebSocket.OPEN) return;
 
-  const data = await chrome.storage.local.get(['customServerIp', 'clientId']);
-  const serverIp = data.customServerIp || CONFIG.DEFAULT_SERVER_HOST;
+  const data = await chrome.storage.local.get(['clientId']);
+  const serverIp = CONFIG.DEFAULT_SERVER_HOST;
   connectedServerHost = serverIp;
   const isLocal = /^(127\.0\.0\.1|localhost|192\.168\.|10\.)/.test(serverIp);
   const wsScheme = isLocal ? 'ws' : 'wss';
@@ -499,8 +500,7 @@ function enqueueResponse(msg) {
 
 async function deliverOnce(entry) {
   try {
-    const data = await chrome.storage.local.get(['customServerIp']);
-    const serverIp = data.customServerIp || CONFIG.DEFAULT_SERVER_HOST;
+    const serverIp = connectedServerHost || CONFIG.DEFAULT_SERVER_HOST;
     const targetCallbackUrl = normalizeCallbackUrl(serverIp);
 
     const resp = await fetch(targetCallbackUrl, {
