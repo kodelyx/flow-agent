@@ -136,3 +136,122 @@ chrome.runtime.sendMessage({ type: 'REQUEST_LOG' }, (data) => {
   if (chrome.runtime.lastError) return;
   if (data && data.log) renderLog(data.log);
 });
+
+// ── Quick generation ────────────────────────────────────────
+
+function getBackendBase() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['customServerIp'], (data) => {
+      const raw = String(data.customServerIp || '127.0.0.1:8001').trim().replace(/\/$/, '');
+      if (/^https?:\/\//i.test(raw)) return resolve(raw);
+      const local = /^(localhost|127\.0\.0\.1)(:|$)/i.test(raw);
+      resolve(`${local ? 'http' : 'https'}://${raw}`);
+    });
+  });
+}
+
+async function apiJson(path, options = {}) {
+  const base = await getBackendBase();
+  const response = await fetch(`${base}${path}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+  });
+  const text = await response.text();
+  let data;
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
+  if (!response.ok) {
+    const detail = data.detail || data.error || `HTTP ${response.status}`;
+    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+  }
+  return data;
+}
+
+async function refreshQuickStatus() {
+  const health = document.getElementById('quick-health');
+  const credits = document.getElementById('quick-credits');
+  try {
+    const status = await apiJson('/health');
+    const ready = status.status === 'healthy' && status.extension_connected && status.has_flow_key;
+    health.textContent = ready ? 'Flow ready' : 'Needs connection';
+    health.className = `health-pill ${ready ? 'ok' : 'bad'}`;
+    const creditData = await apiJson('/v1/credits');
+    const total = creditData.total_credits ?? creditData.credits ?? creditData.data?.credits ?? '—';
+    credits.textContent = `${total} credits`;
+  } catch (error) {
+    health.textContent = 'Backend offline';
+    health.className = 'health-pill bad';
+    credits.textContent = '— credits';
+  }
+}
+
+function updateQuickFields() {
+  const isVideo = document.getElementById('quick-type').value === 'video';
+  const model = document.getElementById('quick-model');
+  const duration = document.getElementById('quick-duration');
+  const aspect = document.getElementById('quick-aspect');
+  model.hidden = isVideo;
+  duration.hidden = !isVideo;
+  const square = aspect.querySelector('option[value="square"]');
+  square.disabled = isVideo;
+  if (isVideo && aspect.value === 'square') aspect.value = 'landscape';
+}
+
+document.getElementById('quick-type').addEventListener('change', updateQuickFields);
+
+document.getElementById('quick-generate').addEventListener('click', async () => {
+  const button = document.getElementById('quick-generate');
+  const result = document.getElementById('quick-result');
+  const prompt = document.getElementById('quick-prompt').value.trim();
+  if (!prompt) {
+    result.textContent = 'Prompt required.';
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = 'Generating…';
+  result.textContent = 'Request sent. Keep this popup open.';
+
+  try {
+    const type = document.getElementById('quick-type').value;
+    const aspect = document.getElementById('quick-aspect').value;
+    let data;
+    if (type === 'image') {
+      const sizes = { landscape: '1792x1024', portrait: '1024x1792', square: '1024x1024' };
+      data = await apiJson('/v1/images/generations', {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt,
+          model: document.getElementById('quick-model').value,
+          size: sizes[aspect] || sizes.landscape,
+          n: 1,
+        }),
+      });
+    } else {
+      data = await apiJson('/v1/videos/generations', {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt,
+          aspect,
+          duration: Number(document.getElementById('quick-duration').value),
+          n: 1,
+        }),
+      });
+    }
+
+    const item = data.data?.[0] || {};
+    if (item.url) {
+      result.innerHTML = `Done · <a href="${escHtml(item.url)}" target="_blank" rel="noreferrer">Open result</a>`;
+    } else {
+      result.textContent = 'Done. Check Flow history for the result.';
+    }
+    refreshQuickStatus();
+  } catch (error) {
+    result.textContent = `Failed: ${error.message}`;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Generate with Flow';
+  }
+});
+
+updateQuickFields();
+refreshQuickStatus();

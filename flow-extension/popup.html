@@ -308,6 +308,76 @@
       color: var(--muted);
       text-align: center;
     }
+
+    .quick-panel {
+      padding: 12px 14px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .health-row,
+    .form-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .health-row { margin-bottom: 10px; }
+
+    .health-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #f1f5f9;
+      color: var(--text-dim);
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .health-pill::before {
+      content: '';
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+
+    .health-pill.ok::before { background: var(--green); }
+    .health-pill.bad::before { background: var(--red); }
+    #quick-credits { margin-left: auto; font-weight: 800; color: var(--accent); }
+
+    .quick-panel textarea,
+    .quick-panel select {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--bg);
+      color: var(--text);
+      font: 500 11px var(--font);
+      outline: none;
+    }
+
+    .quick-panel textarea { min-height: 62px; resize: vertical; padding: 8px; margin-bottom: 8px; }
+    .quick-panel select { padding: 6px 7px; }
+    .form-row { margin-bottom: 8px; }
+    .form-row > * { flex: 1; min-width: 0; }
+
+    #quick-generate {
+      width: 100%;
+      border: 0;
+      border-radius: 7px;
+      padding: 8px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-soft));
+      color: white;
+      font: 700 11px var(--font);
+      cursor: pointer;
+    }
+
+    #quick-generate:disabled { opacity: .55; cursor: wait; }
+    #quick-result { margin-top: 8px; font-size: 10px; color: var(--text-dim); word-break: break-word; }
+    #quick-result a { color: var(--accent); font-weight: 700; }
   </style>
 </head>
 
@@ -319,6 +389,38 @@
     <div class="header-title">Flow Agent</div>
     <button id="btn-panel">Side Panel</button>
   </header>
+
+  <section class="quick-panel">
+    <div class="health-row">
+      <span class="health-pill" id="quick-health">Checking backend</span>
+      <span id="quick-credits">— credits</span>
+    </div>
+    <textarea id="quick-prompt" placeholder="Describe an image or video…"></textarea>
+    <div class="form-row">
+      <select id="quick-type" title="Generation type">
+        <option value="image">Image</option>
+        <option value="video">Video</option>
+      </select>
+      <select id="quick-model" title="Image model">
+        <option value="gem_pix_2" selected>Pro · gem_pix_2</option>
+        <option value="narwhal">Standard · narwhal</option>
+        <option value="harbor_seal">Lite · harbor_seal</option>
+      </select>
+      <select id="quick-aspect" title="Aspect ratio">
+        <option value="landscape">Landscape</option>
+        <option value="portrait">Portrait</option>
+        <option value="square">Square</option>
+      </select>
+      <select id="quick-duration" title="Video duration" hidden>
+        <option value="4">4 sec</option>
+        <option value="6">6 sec</option>
+        <option value="8" selected>8 sec</option>
+        <option value="10">10 sec</option>
+      </select>
+    </div>
+    <button id="quick-generate">Generate with Flow</button>
+    <div id="quick-result" aria-live="polite"></div>
+  </section>
 
   <div class="log-header">
     Recent Requests
