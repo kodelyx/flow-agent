@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Generated and uploaded media
+output/
+input/
+*.mp4
+*.png
+*.jpg
+*.jpeg
+!flow-extension/icon*.png
+media-id.js
+
+# Secrets and local credentials
+config.env
+github-token
+cloudflared/
+*.pem
+
+# Logs
+*.log
+logs/
+
+# Chrome extension build artifacts
+_metadata/
+
+# OS
+.DS_Store
+Thumbs.db
