@@ -18,6 +18,21 @@ let callbackSecret = null;  // Auth secret for HTTP callback, received from serv
 let state = 'off'; // off | idle | running
 let manualDisconnect = false;
 let extensionClientId = '';
+
+function normalizeCallbackUrl(value) {
+  try {
+    const raw = String(value || '').trim();
+    const parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    const local = /^(localhost|127\.0\.0\.1|192\.168\.|10\.)/.test(parsed.hostname);
+    parsed.protocol = local ? 'http:' : 'https:';
+    parsed.pathname = '/api/ext/callback';
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return 'http://127.0.0.1:8001/api/ext/callback';
+  }
+}
 let metrics = {
   tokenCapturedAt: null,
   requestCount: 0,   // captcha-consuming requests only (gen image/video/upscale)
@@ -51,12 +66,14 @@ let requestLog = [];
 function addRequestLog(entry) {
   requestLog.unshift(entry);
   if (requestLog.length > 100) requestLog.pop();
+  chrome.storage.local.set({ requestLog }).catch(() => {});
   broadcastRequestLog();
 }
 
 function updateRequestLog(id, updates) {
   const entry = requestLog.find((e) => e.id === id);
   if (entry) Object.assign(entry, updates);
+  chrome.storage.local.set({ requestLog }).catch(() => {});
   broadcastRequestLog();
 }
 
@@ -72,18 +89,20 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'reconnect') connectToAgent();
   if (alarm.name === 'keepAlive') keepAlive();
   if (alarm.name === 'flushOutbox') flushOutbox();
-  if (alarm.name === 'parkWorkTab') await parkWorkTab();
+  if (alarm.name === 'closeIdleFlowTab') await closeIdleFlowTab();
   if (alarm.name === 'token-refresh') {
     await captureTokenFromFlowTab();
   }
 });
 
 async function init() {
-  const data = await chrome.storage.local.get(['flowKey', 'metrics', 'callbackSecret', 'callbackUrl']);
+  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  const data = await chrome.storage.local.get(['flowKey', 'metrics', 'callbackSecret', 'callbackUrl', 'requestLog']);
   if (data.flowKey) flowKey = data.flowKey;
   if (data.metrics) Object.assign(metrics, data.metrics);
   if (data.callbackSecret) callbackSecret = data.callbackSecret;
-  if (data.callbackUrl) callbackUrl = data.callbackUrl;
+  if (data.callbackUrl) callbackUrl = normalizeCallbackUrl(data.callbackUrl);
+  if (Array.isArray(data.requestLog)) requestLog = data.requestLog.slice(0, 100);
   await loadOutbox();
   connectToAgent();
   chrome.alarms.create('keepAlive', { periodInMinutes: 0.4 });
@@ -124,40 +143,37 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 let _openingFlowTab = false;
 
 // ─── On-demand tab lifecycle ────────────────────────────────
-// Open the Flow tab only when real work needs it (token capture, captcha
-// solve), and park it (not close — closing the last tab in a profile's
-// window can take the window down too) at chrome://extensions/ a couple
-// minutes after the last use instead of leaving it open/reloading forever.
+// Open the Flow tab only when real work needs it (token capture or captcha).
+// Keep it available in the background so user tabs are never redirected.
 const FLOW_TAB_URLS = ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'];
 const FLOW_URL = 'https://labs.google/fx/tools/flow';
-const PARK_URL = 'chrome://extensions/';
-const IDLE_PARK_MINUTES = 2;
 let workTabId = null;
+let flowTabOpening = null;
+let workTabCreatedByExtension = false;
+
+function scheduleFlowTabClose() {
+  if (workTabCreatedByExtension) {
+    chrome.alarms.create('closeIdleFlowTab', { delayInMinutes: 2 });
+  }
+}
+
+async function closeIdleFlowTab() {
+  if (!workTabId || !workTabCreatedByExtension) return;
+  const tabId = workTabId;
+  workTabId = null;
+  workTabCreatedByExtension = false;
+  try {
+    await chrome.tabs.remove(tabId);
+  } catch { /* tab was already closed */ }
+}
 
 function isFlowUrl(url) {
   return !!url && FLOW_TAB_URLS.some((p) => new RegExp(p.replace(/\./g, '\\.').replace(/\*/g, '.*')).test(url));
 }
 
-function scheduleParkAlarm() {
-  chrome.alarms.create('parkWorkTab', { delayInMinutes: IDLE_PARK_MINUTES });
-}
-
-async function parkWorkTab() {
-  if (!workTabId) return;
-  try {
-    const tab = await chrome.tabs.get(workTabId);
-    if (tab && !tab.url?.startsWith(PARK_URL)) {
-      await chrome.tabs.update(workTabId, { url: PARK_URL });
-      console.log('[Flow Agent] Idle — parked work tab at chrome://extensions/');
-    }
-  } catch (e) {
-    workTabId = null; // tab was closed by the user
-  }
-}
-
-// Finds/wakes/creates the Flow tab and resets its idle-park timer. Returns
+// Finds/wakes/creates the Flow tab. Returns
 // the tab, or null if it couldn't be opened.
-async function getOrOpenFlowTab() {
+async function _getOrOpenFlowTab() {
   if (workTabId) {
     try {
       let tab = await chrome.tabs.get(workTabId);
@@ -166,7 +182,7 @@ async function getOrOpenFlowTab() {
         await sleep(3000);
         tab = await chrome.tabs.get(workTabId);
       }
-      scheduleParkAlarm();
+      scheduleFlowTabClose();
       return tab;
     } catch (e) {
       workTabId = null; // closed by the user — fall through and open fresh
@@ -176,17 +192,29 @@ async function getOrOpenFlowTab() {
   const tabs = await chrome.tabs.query({ url: FLOW_TAB_URLS });
   if (tabs.length) {
     workTabId = tabs[0].id;
-    scheduleParkAlarm();
+    workTabCreatedByExtension = false;
     return tabs[0];
   }
 
-  await chrome.tabs.create({ url: FLOW_URL, active: false });
+  const createdTab = await chrome.tabs.create({ url: FLOW_URL, active: false });
+  workTabId = createdTab.id;
+  workTabCreatedByExtension = true;
   await sleep(3000);
   const retryTabs = await chrome.tabs.query({ url: FLOW_TAB_URLS });
   if (!retryTabs.length) return null;
   workTabId = retryTabs[0].id;
-  scheduleParkAlarm();
+  scheduleFlowTabClose();
   return retryTabs[0];
+}
+
+async function getOrOpenFlowTab() {
+  if (flowTabOpening) return flowTabOpening;
+  flowTabOpening = _getOrOpenFlowTab();
+  try {
+    return await flowTabOpening;
+  } finally {
+    flowTabOpening = null;
+  }
 }
 
 // Token is considered fresh if it exists and was captured less than 50 minutes ago.
@@ -383,8 +411,8 @@ async function connectToAgent() {
         }
       } else if (msg.type === 'callback_config') {
         callbackSecret = msg.secret;
-        callbackUrl = msg.callback_url;
-        chrome.storage.local.set({ callbackSecret: msg.secret, callbackUrl: msg.callback_url });
+        callbackUrl = normalizeCallbackUrl(msg.callback_url);
+        chrome.storage.local.set({ callbackSecret: msg.secret, callbackUrl });
         console.log('[Flow Agent] Received callback config:', callbackUrl);
       } else if (msg.type === 'callback_secret') {
         callbackSecret = msg.secret;
@@ -466,7 +494,7 @@ async function deliverOnce(entry) {
   try {
     const data = await chrome.storage.local.get(['customServerIp']);
     const serverIp = data.customServerIp || CONFIG.DEFAULT_SERVER_HOST;
-    const targetCallbackUrl = `http://${serverIp}/api/ext/callback`;
+    const targetCallbackUrl = normalizeCallbackUrl(serverIp);
 
     const resp = await fetch(targetCallbackUrl, {
       method: 'POST',
@@ -875,6 +903,29 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
 
   if (msg.type === 'REQUEST_LOG') {
     reply({ log: requestLog });
+    return true;
+  }
+
+  if (msg.type === 'CLEAR_REQUEST_LOG') {
+    requestLog = [];
+    chrome.storage.local.remove('requestLog').then(() => {
+      broadcastRequestLog();
+      reply({ ok: true });
+    });
+    return true;
+  }
+
+  if (msg.type === 'ADD_HISTORY') {
+    addRequestLog({
+      id: msg.entry?.id || `popup-${Date.now()}`,
+      time: msg.entry?.time || new Date().toISOString(),
+      type: msg.entry?.type || 'GEN_IMG',
+      status: msg.entry?.status || 'success',
+      url: msg.entry?.url || '',
+      payloadSummary: msg.entry?.prompt || '',
+      responseSummary: msg.entry?.url ? 'Generated result ready' : 'Generation completed',
+    });
+    reply({ ok: true });
     return true;
   }
 

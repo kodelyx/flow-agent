@@ -38,7 +38,8 @@
 
     html,
     body {
-      width: 360px;
+      width: 100%;
+      min-width: 320px;
       min-height: 200px;
       background: var(--bg);
       color: var(--text);
@@ -46,6 +47,7 @@
       font-size: 12px;
       line-height: 1.5;
       -webkit-font-smoothing: antialiased;
+      padding-bottom:64px;
     }
 
     header {
@@ -104,6 +106,14 @@
       box-shadow: 0 2px 6px rgba(255, 55, 95, 0.2);
     }
 
+    .brand-sub { color:var(--muted); font-size:9px; font-weight:500; }
+    #btn-settings { border:1px solid var(--border); width:30px; height:30px; border-radius:9px; background:#fff; color:var(--text-dim); cursor:pointer; font-size:14px; box-shadow:0 2px 8px rgba(15,23,42,.05); }
+    .settings-pop { display:none; padding:10px 14px; background:#fff; border-bottom:1px solid var(--border); }
+    .settings-pop.open { display:block; }
+    .settings-card input { display:block; width:100%; height:40px; padding:0 12px; margin:0 0 12px; border:1px solid #dfe3eb; border-radius:10px; background:#fbfcfe; color:var(--text); font:600 11px var(--font); outline:none; transition:border-color .2s,box-shadow .2s,background .2s; }
+    .settings-card input:focus { background:#fff; border-color:rgba(255,55,95,.55); box-shadow:0 0 0 3px rgba(255,55,95,.09); }
+    #save-settings { width:100%; border:0; border-radius:10px; padding:11px; background:linear-gradient(135deg,#111827,#252c3c); color:#fff; font:700 11px var(--font); cursor:pointer; box-shadow:0 6px 16px rgba(15,23,42,.16); }
+
     #btn-panel:hover {
       background: linear-gradient(135deg, var(--accent-soft), var(--accent));
       box-shadow: 0 3px 10px rgba(255, 55, 95, 0.3);
@@ -123,6 +133,8 @@
       background: var(--surface);
       border-bottom: 1px solid var(--border);
     }
+    .log-actions { display:flex; align-items:center; gap:7px; }
+    #clear-history { border:0; background:transparent; color:var(--accent); font:700 9px var(--font); cursor:pointer; }
 
     #log-count {
       background: var(--accent-bg);
@@ -310,10 +322,14 @@
     }
 
     .quick-panel {
-      padding: 12px 14px;
-      background: var(--surface);
+      padding: 14px;
+      background: linear-gradient(180deg, #fff 0%, #fafbff 100%);
       border-bottom: 1px solid var(--border);
     }
+
+    .quick-title { margin-bottom:12px; }
+    .quick-title strong { display:block; font-size:15px; letter-spacing:-.02em; }
+    .quick-title span { color:var(--muted); font-size:10px; }
 
     .health-row,
     .form-row {
@@ -322,7 +338,7 @@
       gap: 8px;
     }
 
-    .health-row { margin-bottom: 10px; }
+    .health-row { margin-left:auto; flex-direction:column; align-items:flex-end; justify-content:center; gap:4px; }
 
     .health-pill {
       display: inline-flex;
@@ -336,6 +352,9 @@
       font-weight: 700;
     }
 
+    .health-pill.status-only { width:9px; height:9px; padding:0; background:transparent; font-size:0; }
+    .health-pill.status-only::before { width:9px; height:9px; box-shadow:0 0 0 4px rgba(52,199,89,.1); }
+
     .health-pill::before {
       content: '';
       width: 7px;
@@ -347,37 +366,116 @@
     .health-pill.ok::before { background: var(--green); }
     .health-pill.bad::before { background: var(--red); }
     #quick-credits { margin-left: auto; font-weight: 800; color: var(--accent); }
+    .header-badge { display:inline-flex; align-items:center; gap:6px; min-height:23px; padding:4px 8px; border:1px solid var(--border); border-radius:8px; background:#fff; box-shadow:0 2px 8px rgba(15,23,42,.05); white-space:nowrap; }
+    header #quick-credits { margin-left:0; font-size:10px; }
+    #monitor-client { color:var(--text-dim); font:700 9px var(--mono); }
+    .account-badge { justify-content:center; }
+    .badge-label { color:var(--muted); font-size:8px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }
+    .badge-value { color:var(--text); font-size:10px; font-weight:800; }
+    #quick-credits.badge-value { color:var(--accent); }
+    .header-token { margin-top:2px; color:var(--muted); font-size:9px; font-weight:600; }
 
     .quick-panel textarea,
     .quick-panel select {
       width: 100%;
       border: 1px solid var(--border);
-      border-radius: 7px;
-      background: var(--bg);
+      border-radius: 10px;
+      background: #fff;
       color: var(--text);
       font: 500 11px var(--font);
       outline: none;
     }
 
-    .quick-panel textarea { min-height: 62px; resize: vertical; padding: 8px; margin-bottom: 8px; }
-    .quick-panel select { padding: 6px 7px; }
+    .quick-panel textarea { min-height: 110px; resize: vertical; padding: 11px 12px; margin-bottom: 10px; line-height:1.55; }
+    .quick-panel select { appearance:none; padding:9px 28px 9px 10px; background-image:linear-gradient(45deg,transparent 50%,#64748b 50%),linear-gradient(135deg,#64748b 50%,transparent 50%); background-position:calc(100% - 13px) 50%,calc(100% - 9px) 50%; background-size:4px 4px,4px 4px; background-repeat:no-repeat; }
     .form-row { margin-bottom: 8px; }
     .form-row > * { flex: 1; min-width: 0; }
+
+    .type-switch { display:grid; grid-template-columns:1fr 1fr; gap:3px; padding:3px; margin-bottom:8px; background:#eef1f6; border:1px solid var(--border); border-radius:11px; }
+    .type-option { border:0; border-radius:8px; padding:8px; background:transparent; color:var(--muted); font:700 11px var(--font); cursor:pointer; }
+    .type-option.active { color:#fff; background:linear-gradient(135deg,#171923,#2c3040); box-shadow:0 3px 8px rgba(15,23,42,.18); }
+    .field-label { display:block; margin:0 0 5px 2px; color:var(--muted); font-size:9px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+    .field { flex:1; min-width:0; }
+    .custom-select { position:relative; }
+    .select-trigger { width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:9px 10px; border:1px solid var(--border); border-radius:10px; background:#fff; color:var(--text); font:600 10px var(--font); cursor:pointer; }
+    .select-trigger::after { content:'⌄'; color:var(--muted); font-size:12px; }
+    .custom-select.open .select-trigger { border-color:rgba(255,55,95,.45); box-shadow:0 0 0 3px rgba(255,55,95,.08); }
+    .select-menu { display:none; position:absolute; left:0; right:0; top:calc(100% + 5px); z-index:30; overflow:hidden; padding:4px; border:1px solid var(--border); border-radius:11px; background:#fff; box-shadow:0 14px 34px rgba(15,23,42,.18); }
+    .custom-select.open .select-menu { display:grid; gap:2px; }
+    .select-choice { border:0; border-radius:8px; padding:8px 9px; background:transparent; color:var(--text-dim); font:600 10px var(--font); text-align:left; cursor:pointer; }
+    .select-choice:hover { background:#f5f7fa; }
+    .select-choice.selected { background:var(--accent-bg); color:var(--accent); font-weight:800; }
+    .select-choice:disabled { display:none; }
 
     #quick-generate {
       width: 100%;
       border: 0;
       border-radius: 7px;
-      padding: 8px;
+      padding: 10px;
       background: linear-gradient(135deg, var(--accent), var(--accent-soft));
       color: white;
       font: 700 11px var(--font);
       cursor: pointer;
+      box-shadow:0 6px 16px rgba(255,55,95,.22);
     }
 
     #quick-generate:disabled { opacity: .55; cursor: wait; }
-    #quick-result { margin-top: 8px; font-size: 10px; color: var(--text-dim); word-break: break-word; }
-    #quick-result a { color: var(--accent); font-weight: 700; }
+    #quick-result { margin-top:10px; font-size:10px; color:var(--text-dim); word-break:break-word; }
+    .result-card { overflow:hidden; border:1px solid var(--border); border-radius:13px; background:#fff; box-shadow:0 8px 24px rgba(15,23,42,.08); }
+    .result-preview { display:block; width:100%; max-height:220px; object-fit:cover; background:#eef1f5; }
+    .result-meta { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 11px; }
+    .result-meta strong { color:var(--text); font-size:11px; }
+    .result-open { flex-shrink:0; padding:7px 11px; border-radius:8px; background:var(--accent-bg); color:var(--accent); font-weight:800; text-decoration:none; }
+    .tabs { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; padding:8px 10px; position:sticky; top:0; z-index:5; background:rgba(255,255,255,.94); backdrop-filter:blur(12px); border-bottom:1px solid var(--border); }
+    .tab { border:0; outline:0; border-radius:9px; padding:8px 6px; background:transparent; color:var(--muted); font:700 10px var(--font); cursor:pointer; }
+    .tab:focus-visible { box-shadow:0 0 0 2px rgba(255,55,95,.2); }
+    .tab.active { color:var(--accent); background:var(--accent-bg); box-shadow:inset 0 0 0 1px rgba(255,55,95,.12); }
+    .tab-panel { display:none; }
+    .tab-panel.active { display:block; }
+    #panel-history.active { min-height:calc(100vh - 106px); display:flex; flex-direction:column; background:#fff; }
+    #panel-history #log-list { flex:1; }
+    #panel-history .footer { margin-top:auto; position:sticky; bottom:0; }
+    .settings-card { margin:14px; padding:14px; border:1px solid var(--border); border-radius:14px; background:#fff; box-shadow:0 8px 30px rgba(15,23,42,.06); }
+    .settings-card h2 { font-size:14px; margin-bottom:3px; }
+    .settings-card > p { color:var(--muted); font-size:10px; margin-bottom:14px; }
+    .history-head { padding:14px 14px 8px; background:#fff; }
+    .history-head strong { display:block; font-size:14px; }
+    .history-head small { color:var(--muted); }
+    .media-head { display:flex; align-items:center; justify-content:space-between; padding:14px; }
+    .media-head strong { display:block; font-size:14px; }
+    .media-head small { color:var(--muted); }
+    #refresh-media { border:1px solid var(--border); border-radius:8px; padding:6px 9px; background:#fff; color:var(--text-dim); font:700 9px var(--font); cursor:pointer; }
+    .media-grid { display:grid; grid-template-columns:1fr; gap:12px; padding:0 14px 14px; }
+    .media-item { overflow:hidden; border:1px solid var(--border); border-radius:12px; background:#fff; box-shadow:0 5px 18px rgba(15,23,42,.06); }
+    .media-item img,.media-item video { display:block; width:100%; max-height:280px; aspect-ratio:16/9; object-fit:cover; background:#eef1f5; }
+    .media-item > a { display:block; color:inherit; text-decoration:none; }
+    .media-info { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 11px; }
+    .media-copy { min-width:0; }
+    .media-copy strong { display:block; color:var(--text); font-size:11px; }
+    .media-copy span { display:block; overflow:hidden; margin-top:2px; color:var(--muted); font-size:8px; white-space:nowrap; text-overflow:ellipsis; }
+    .media-view { flex-shrink:0; padding:7px 12px; border-radius:8px; background:var(--accent-bg); color:var(--accent); font-size:10px; font-weight:800; text-decoration:none; }
+    .media-empty { grid-column:1/-1; padding:48px 15px; text-align:center; color:var(--muted); }
+    .monitor { padding:14px; }
+    .monitor-card { padding:14px; border:1px solid var(--border); border-radius:14px; background:#fff; box-shadow:0 8px 28px rgba(15,23,42,.06); }
+    .monitor-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+    .monitor-state { display:flex; align-items:center; gap:8px; font-weight:800; }
+    .monitor-dot { width:9px; height:9px; border-radius:50%; background:var(--muted); }
+    .monitor-dot.on { background:var(--green); box-shadow:0 0 0 4px rgba(52,199,89,.12); }
+    .agent-toggle { border:0; border-radius:999px; padding:7px 12px; color:#fff; background:#111827; font:800 9px var(--font); cursor:pointer; }
+    .agent-toggle.on { background:var(--green); }
+    .metrics-mini { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin-bottom:12px; }
+    .metric-mini { padding:11px 5px; border:1px solid var(--border); border-radius:10px; background:#fafbfc; text-align:center; }
+    .metric-mini strong { display:block; font-size:18px; line-height:1.1; }
+    .metric-mini span { color:var(--muted); font-size:8px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; }
+    .token-card { display:flex; align-items:center; justify-content:space-between; padding:10px 11px; margin-bottom:10px; border-radius:10px; background:#f5f7fa; }
+    #monitor-token { font-size:10px; font-weight:700; color:var(--text-dim); }
+    .monitor-actions { position:fixed; left:0; right:0; bottom:0; z-index:20; display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:10px 12px; background:rgba(255,255,255,.96); backdrop-filter:blur(14px); border-top:1px solid var(--border); box-shadow:0 -8px 24px rgba(15,23,42,.06); }
+    .monitor-actions button { border:1px solid var(--border); border-radius:9px; padding:9px; background:#fff; color:var(--text); font:700 10px var(--font); cursor:pointer; }
+    .monitor-actions button.primary { border:0; color:#fff; background:linear-gradient(135deg,var(--accent),var(--accent-soft)); }
+    #toast { position:fixed; left:50%; bottom:72px; z-index:40; max-width:calc(100% - 28px); padding:9px 13px; border-radius:10px; background:#111827; color:#fff; font:700 10px var(--font); box-shadow:0 10px 30px rgba(15,23,42,.22); opacity:0; pointer-events:none; transform:translate(-50%,10px); transition:.2s ease; white-space:nowrap; }
+    #toast.show { opacity:1; transform:translate(-50%,0); }
+    #toast.ok { background:#15803d; }
+    #toast.error { background:#dc2626; }
   </style>
 </head>
 
@@ -386,52 +484,73 @@
     <div style="width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; overflow: visible; flex-shrink: 0; margin-right: 4px;">
       <img src="icon48.png" style="width: 100%; height: 100%; object-fit: contain; transform: scale(1.6); mix-blend-mode: multiply;">
     </div>
-    <div class="header-title">Flow Agent</div>
-    <button id="btn-panel">Side Panel</button>
+    <div class="header-title">Flow Agent<div class="header-token" id="monitor-token">No token</div></div>
+    <div class="health-row">
+      <span class="header-badge account-badge"><span class="badge-label">Device</span><span class="badge-value" id="monitor-client">—</span></span>
+      <span class="header-badge account-badge"><span class="badge-label">Credits</span><span class="badge-value" id="quick-credits">—</span></span>
+    </div>
   </header>
 
-  <section class="quick-panel">
-    <div class="health-row">
-      <span class="health-pill" id="quick-health">Checking backend</span>
-      <span id="quick-credits">— credits</span>
+  <nav class="tabs" aria-label="Flow Agent sections">
+    <button class="tab active" data-tab="create">Create</button>
+    <button class="tab" data-tab="media">Media</button>
+    <button class="tab" data-tab="history">Logs</button>
+    <button class="tab" data-tab="settings">Settings</button>
+  </nav>
+
+  <section class="tab-panel" id="panel-settings"><div class="settings-card">
+    <h2>Connection settings</h2><p>Connect this extension to your Flow Agent backend.</p>
+    <label class="field-label" for="setting-server">Backend server</label>
+    <input id="setting-server" placeholder="127.0.0.1:8001">
+    <label class="field-label" for="setting-client">Client ID</label>
+    <input id="setting-client" placeholder="My-Mac">
+    <button id="save-settings">Save &amp; reconnect</button>
+  </div></section>
+
+  <section class="tab-panel" id="panel-media">
+    <div class="media-head"><div><strong>Media library</strong><small>Backend and extension generations</small></div><button id="refresh-media">Refresh</button></div>
+    <div class="media-grid" id="media-grid"><div class="media-empty">Loading media…</div></div>
+  </section>
+
+  <section class="tab-panel active" id="panel-create"><div class="quick-panel">
+    <div class="monitor-card" style="margin-bottom:14px">
+      <div class="monitor-top"><div class="monitor-state"><span class="monitor-dot" id="monitor-dot"></span><span id="monitor-state">Checking…</span></div><button class="agent-toggle" id="agent-toggle">OFF</button></div>
+      <div class="metrics-mini">
+        <div class="metric-mini"><strong id="metric-total">0</strong><span>Total</span></div>
+        <div class="metric-mini"><strong id="metric-success" style="color:var(--green)">0</strong><span>Success</span></div>
+        <div class="metric-mini"><strong id="metric-failed" style="color:var(--red)">0</strong><span>Failed</span></div>
+      </div>
     </div>
-    <textarea id="quick-prompt" placeholder="Describe an image or video…"></textarea>
+    <label class="field-label" for="quick-prompt">Prompt</label>
+    <textarea id="quick-prompt" placeholder="Describe what you want to create…"></textarea>
+    <div class="type-switch" role="group" aria-label="Generation type">
+      <button class="type-option active" type="button" data-type="image">Image</button>
+      <button class="type-option" type="button" data-type="video">Video</button>
+      <input id="quick-type" type="hidden" value="image">
+    </div>
     <div class="form-row">
-      <select id="quick-type" title="Generation type">
-        <option value="image">Image</option>
-        <option value="video">Video</option>
-      </select>
-      <select id="quick-model" title="Image model">
-        <option value="gem_pix_2" selected>Nano Banana 2</option>
-        <option value="narwhal">Nano Banana</option>
-        <option value="harbor_seal">Nano Banana Lite</option>
-      </select>
-      <select id="quick-aspect" title="Aspect ratio">
-        <option value="landscape">Landscape</option>
-        <option value="portrait">Portrait</option>
-        <option value="square">Square</option>
-      </select>
-      <select id="quick-duration" title="Video duration" hidden>
-        <option value="4">4 sec</option>
-        <option value="6">6 sec</option>
-        <option value="8" selected>8 sec</option>
-        <option value="10">10 sec</option>
-      </select>
+      <div class="field" id="model-field"><label class="field-label">Model</label><input id="quick-model" type="hidden" value="gem_pix_2"><div class="custom-select" data-input="quick-model"><button class="select-trigger" type="button">Nano Banana 2</button><div class="select-menu"><button class="select-choice selected" data-value="gem_pix_2" type="button">Nano Banana 2</button><button class="select-choice" data-value="narwhal" type="button">Nano Banana</button><button class="select-choice" data-value="harbor_seal" type="button">Nano Banana Lite</button></div></div></div>
+      <div class="field"><label class="field-label">Format</label><input id="quick-aspect" type="hidden" value="landscape"><div class="custom-select" data-input="quick-aspect"><button class="select-trigger" type="button">Landscape</button><div class="select-menu"><button class="select-choice selected" data-value="landscape" type="button">Landscape</button><button class="select-choice" data-value="portrait" type="button">Portrait</button><button class="select-choice" data-value="square" type="button">Square</button></div></div></div>
+      <div class="field" id="duration-field" hidden><label class="field-label">Duration</label><input id="quick-duration" type="hidden" value="8"><div class="custom-select" data-input="quick-duration"><button class="select-trigger" type="button">8 sec</button><div class="select-menu"><button class="select-choice" data-value="4" type="button">4 sec</button><button class="select-choice" data-value="6" type="button">6 sec</button><button class="select-choice selected" data-value="8" type="button">8 sec</button><button class="select-choice" data-value="10" type="button">10 sec</button></div></div></div>
     </div>
     <button id="quick-generate">Generate with Flow</button>
     <div id="quick-result" aria-live="polite"></div>
-  </section>
+  </div></section>
 
+  <section class="tab-panel" id="panel-history">
   <div class="log-header">
-    Recent Requests
-    <span id="log-count">0</span>
+    Request Logs
+    <span class="log-actions"><button id="clear-history">Clear</button><span id="log-count">0</span></span>
   </div>
 
   <div id="log-list">
     <div class="log-empty">No requests yet</div>
   </div>
 
-  <div class="footer">Click a row to expand details</div>
+  </section>
+
+  <div class="monitor-actions"><button class="primary" id="open-flow">Open Flow</button><button id="refresh-token">Refresh Token</button></div>
+  <div id="toast" role="status" aria-live="polite"></div>
 
   <script src="popup.js"></script>
 </body>

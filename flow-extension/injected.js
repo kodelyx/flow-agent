@@ -2,6 +2,10 @@
  * Injected into MAIN world on labs.google — has access to window.grecaptcha
  * Also intercepts TRPC fetch responses to capture fresh signed media URLs.
  */
+(() => {
+if (window.__FLOW_AGENT_MAIN_INJECTED__) return;
+window.__FLOW_AGENT_MAIN_INJECTED__ = true;
+
 const SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
 
 // ─── XHR Interceptor (for file uploads) ─────────────────────
@@ -161,3 +165,4 @@ window.addEventListener('UPLOAD_VIDEO', async ({ detail }) => {
     }));
   }
 });
+})();

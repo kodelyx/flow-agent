@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Flow Agent",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Google Flow image and video generation with health, credits, models, history, CLI and MCP support",
   "icons": {
     "16": "icon16.png",
@@ -62,10 +62,9 @@
     ]
   },
   "side_panel": {
-    "default_path": "side_panel.html"
+    "default_path": "popup.html"
   },
   "action": {
-    "default_popup": "popup.html",
     "default_title": "Flow Agent",
     "default_icon": {
       "16": "icon16.png",

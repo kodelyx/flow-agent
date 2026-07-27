@@ -2,6 +2,9 @@
  * Content script — bridge between background.js and injected.js
  * Injects injected.js into MAIN world to access window.grecaptcha
  */
+if (!globalThis.__FLOW_AGENT_CONTENT_LOADED__) {
+globalThis.__FLOW_AGENT_CONTENT_LOADED__ = true;
+
 (function () {
   const s = document.createElement('script');
   s.src = chrome.runtime.getURL('injected.js');
@@ -89,3 +92,4 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
 
   return true; // keep channel open for async reply
 });
+}

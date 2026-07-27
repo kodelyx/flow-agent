@@ -126,15 +126,125 @@ function renderLog(entries) {
   });
 }
 
-document.getElementById('btn-panel').addEventListener('click', () => {
-  chrome.windows.getCurrent((win) => {
-    chrome.sidePanel.open({ windowId: win.id });
-  });
+function selectTab(name) {
+  document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === name));
+  document.querySelectorAll('.tab-panel').forEach((panel) => panel.classList.toggle('active', panel.id === `panel-${name}`));
+  if (name === 'media') loadMedia();
+}
+
+async function loadMedia() {
+  const grid = document.getElementById('media-grid');
+  grid.innerHTML = '<div class="media-empty">Loading media…</div>';
+  try {
+    const [data, base] = await Promise.all([apiJson('/v1/history'), getBackendBase()]);
+    const items = Array.isArray(data.history) ? data.history : [];
+    if (!items.length) {
+      grid.innerHTML = '<div class="media-empty">No generated media yet</div>';
+      return;
+    }
+    grid.innerHTML = items.map((item) => {
+      const rawUrl = String(item.url || '');
+      const url = escHtml(rawUrl.replace(/^http:\/\/(localhost|127\.0\.0\.1):8001/i, base));
+      const prompt = escHtml(item.prompt || 'Generated media');
+      const preview = item.type === 'video'
+        ? `<video src="${url}" controls preload="metadata"></video>`
+        : `<img src="${url}" alt="${prompt}" loading="lazy">`;
+      const date = item.timestamp ? new Date(item.timestamp * 1000).toLocaleDateString() : '';
+      return `<article class="media-item"><a href="${url}" target="_blank" rel="noreferrer">${preview}</a><div class="media-info"><div class="media-copy"><strong>Generation ready</strong><span title="${prompt}">${prompt} · ${escHtml(date)}</span></div><a class="media-view" href="${url}" target="_blank" rel="noreferrer">View</a></div></article>`;
+    }).join('');
+    grid.querySelectorAll('img,video').forEach((media) => {
+      media.addEventListener('error', () => media.closest('.media-item')?.remove(), { once: true });
+    });
+  } catch (error) {
+    grid.innerHTML = `<div class="media-empty">Could not load media: ${escHtml(error.message)}</div>`;
+  }
+}
+
+let monitorEnabled = false;
+function runtimeMessage(payload) {
+  return new Promise((resolve, reject) => chrome.runtime.sendMessage(payload, (response) => {
+    if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+    else if (response?.error) reject(new Error(response.error));
+    else resolve(response || {});
+  }));
+}
+
+let toastTimer;
+function showToast(message, kind = 'ok') {
+  const toast = document.getElementById('toast');
+  clearTimeout(toastTimer);
+  toast.textContent = message;
+  toast.className = `show ${kind}`;
+  toastTimer = setTimeout(() => { toast.className = ''; }, 2600);
+}
+
+async function refreshMonitor() {
+  try {
+    const status = await runtimeMessage({ type: 'STATUS' });
+    monitorEnabled = status.state !== 'off';
+    const connected = !!status.agentConnected;
+    document.getElementById('monitor-dot').classList.toggle('on', connected);
+    document.getElementById('monitor-state').textContent = !connected ? 'Disconnected' : status.state === 'running' ? 'Generating…' : 'Ready';
+    const toggle = document.getElementById('agent-toggle');
+    toggle.textContent = monitorEnabled ? 'ON' : 'OFF';
+    toggle.classList.toggle('on', monitorEnabled);
+    document.getElementById('metric-total').textContent = status.metrics?.requestCount || 0;
+    document.getElementById('metric-success').textContent = status.metrics?.successCount || 0;
+    document.getElementById('metric-failed').textContent = status.metrics?.failedCount || 0;
+    const age = status.tokenAge == null ? null : Math.round(status.tokenAge / 60000);
+    document.getElementById('monitor-token').textContent = status.flowKeyPresent ? `Token ${age || 0}m` : 'No token';
+    document.getElementById('monitor-client').textContent = (status.clientId || '—').replace(/^client-/, '');
+  } catch {
+    document.getElementById('monitor-state').textContent = 'Extension offline';
+  }
+}
+
+document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => selectTab(tab.dataset.tab)));
+document.getElementById('agent-toggle').addEventListener('click', async () => {
+  await runtimeMessage({ type: monitorEnabled ? 'DISCONNECT' : 'RECONNECT' });
+  setTimeout(refreshMonitor, 350);
 });
+document.getElementById('open-flow').addEventListener('click', () => runtimeMessage({ type: 'OPEN_FLOW_TAB' }));
+document.getElementById('refresh-token').addEventListener('click', async () => {
+  const button = document.getElementById('refresh-token');
+  button.textContent = 'Refreshing…';
+  try {
+    await runtimeMessage({ type: 'REFRESH_TOKEN' });
+    showToast('Flow token refreshed successfully');
+  } catch (error) {
+    showToast(`Token refresh failed: ${error.message}`, 'error');
+  } finally {
+    button.textContent = 'Refresh Token';
+    setTimeout(refreshMonitor, 500);
+  }
+});
+chrome.storage.local.get(['customServerIp', 'clientId'], (data) => {
+  document.getElementById('setting-server').value = data.customServerIp || '127.0.0.1:8001';
+  document.getElementById('setting-client').value = data.clientId || '';
+});
+
+document.getElementById('save-settings').addEventListener('click', async () => {
+  await chrome.storage.local.set({
+    customServerIp: document.getElementById('setting-server').value.trim(),
+    clientId: document.getElementById('setting-client').value.trim(),
+  });
+  chrome.runtime.sendMessage({ type: 'SETTINGS_UPDATED' });
+  selectTab('create');
+  refreshQuickStatus();
+});
+
+document.getElementById('clear-history').addEventListener('click', () => {
+  chrome.runtime.sendMessage({ type: 'CLEAR_REQUEST_LOG' }, () => renderLog([]));
+});
+document.getElementById('refresh-media').addEventListener('click', loadMedia);
 
 chrome.runtime.sendMessage({ type: 'REQUEST_LOG' }, (data) => {
   if (chrome.runtime.lastError) return;
   if (data && data.log) renderLog(data.log);
+});
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === 'REQUEST_LOG_UPDATE' && message.log) renderLog(message.log);
 });
 
 // ── Quick generation ────────────────────────────────────────
@@ -152,9 +262,14 @@ function getBackendBase() {
 
 async function apiJson(path, options = {}) {
   const base = await getBackendBase();
+  const stored = await chrome.storage.local.get(['clientId']);
   const response = await fetch(`${base}${path}`, {
     ...options,
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(stored.clientId ? { 'X-Client-Id': stored.clientId } : {}),
+      ...(options.headers || {}),
+    },
   });
   const text = await response.text();
   let data;
@@ -167,36 +282,56 @@ async function apiJson(path, options = {}) {
 }
 
 async function refreshQuickStatus() {
-  const health = document.getElementById('quick-health');
   const credits = document.getElementById('quick-credits');
   try {
-    const status = await apiJson('/health');
-    const ready = status.status === 'healthy' && status.extension_connected && status.has_flow_key;
-    health.textContent = ready ? 'Flow ready' : 'Needs connection';
-    health.className = `health-pill ${ready ? 'ok' : 'bad'}`;
+    await apiJson('/health');
     const creditData = await apiJson('/v1/credits');
-    const total = creditData.total_credits ?? creditData.credits ?? creditData.data?.credits ?? '—';
-    credits.textContent = `${total} credits`;
+    const balance = creditData.data?.credits ?? creditData.credits ?? '—';
+    credits.textContent = String(balance);
   } catch (error) {
-    health.textContent = 'Backend offline';
-    health.className = 'health-pill bad';
-    credits.textContent = '— credits';
+    credits.textContent = '—';
   }
 }
 
 function updateQuickFields() {
   const isVideo = document.getElementById('quick-type').value === 'video';
-  const model = document.getElementById('quick-model');
-  const duration = document.getElementById('quick-duration');
   const aspect = document.getElementById('quick-aspect');
-  model.hidden = isVideo;
-  duration.hidden = !isVideo;
-  const square = aspect.querySelector('option[value="square"]');
+  document.getElementById('model-field').hidden = isVideo;
+  document.getElementById('duration-field').hidden = !isVideo;
+  const square = document.querySelector('[data-input="quick-aspect"] [data-value="square"]');
   square.disabled = isVideo;
-  if (isVideo && aspect.value === 'square') aspect.value = 'landscape';
+  if (isVideo && aspect.value === 'square') {
+    aspect.value = 'landscape';
+    const widget = document.querySelector('[data-input="quick-aspect"]');
+    widget.querySelector('.select-trigger').textContent = 'Landscape';
+    widget.querySelectorAll('.select-choice').forEach((choice) => choice.classList.toggle('selected', choice.dataset.value === 'landscape'));
+  }
 }
 
-document.getElementById('quick-type').addEventListener('change', updateQuickFields);
+document.querySelectorAll('.custom-select').forEach((widget) => {
+  const trigger = widget.querySelector('.select-trigger');
+  trigger.addEventListener('click', () => {
+    document.querySelectorAll('.custom-select').forEach((item) => item !== widget && item.classList.remove('open'));
+    widget.classList.toggle('open');
+  });
+  widget.querySelectorAll('.select-choice').forEach((choice) => choice.addEventListener('click', () => {
+    document.getElementById(widget.dataset.input).value = choice.dataset.value;
+    trigger.textContent = choice.textContent;
+    widget.querySelectorAll('.select-choice').forEach((item) => item.classList.toggle('selected', item === choice));
+    widget.classList.remove('open');
+  }));
+});
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.custom-select')) document.querySelectorAll('.custom-select').forEach((item) => item.classList.remove('open'));
+});
+
+document.querySelectorAll('.type-option').forEach((button) => {
+  button.addEventListener('click', () => {
+    document.querySelectorAll('.type-option').forEach((item) => item.classList.toggle('active', item === button));
+    document.getElementById('quick-type').value = button.dataset.type;
+    updateQuickFields();
+  });
+});
 
 document.getElementById('quick-generate').addEventListener('click', async () => {
   const button = document.getElementById('quick-generate');
@@ -209,7 +344,7 @@ document.getElementById('quick-generate').addEventListener('click', async () => 
 
   button.disabled = true;
   button.textContent = 'Generating…';
-  result.textContent = 'Request sent. Keep this popup open.';
+  result.textContent = 'Generating with Flow… This may take a moment.';
 
   try {
     const type = document.getElementById('quick-type').value;
@@ -239,12 +374,28 @@ document.getElementById('quick-generate').addEventListener('click', async () => 
     }
 
     const item = data.data?.[0] || {};
+    chrome.runtime.sendMessage({
+      type: 'ADD_HISTORY',
+      entry: {
+        id: `popup-${Date.now()}`,
+        time: new Date().toISOString(),
+        type: type === 'image' ? 'GEN_IMG' : 'GEN_VID',
+        status: 'success',
+        url: item.url || '',
+        prompt,
+      },
+    });
     if (item.url) {
-      result.innerHTML = `Done · <a href="${escHtml(item.url)}" target="_blank" rel="noreferrer">Open result</a>`;
+      const safeUrl = escHtml(item.url);
+      const preview = type === 'image'
+        ? `<img class="result-preview" src="${safeUrl}" alt="Generated image">`
+        : `<video class="result-preview" src="${safeUrl}" controls preload="metadata"></video>`;
+      result.innerHTML = `<div class="result-card">${preview}<div class="result-meta"><strong>Generation ready</strong><a class="result-open" href="${safeUrl}" target="_blank" rel="noreferrer">View</a></div></div>`;
     } else {
       result.textContent = 'Done. Check Flow history for the result.';
     }
     refreshQuickStatus();
+    loadMedia();
   } catch (error) {
     result.textContent = `Failed: ${error.message}`;
   } finally {
@@ -255,3 +406,5 @@ document.getElementById('quick-generate').addEventListener('click', async () => 
 
 updateQuickFields();
 refreshQuickStatus();
+refreshMonitor();
+setInterval(refreshMonitor, 3000);
