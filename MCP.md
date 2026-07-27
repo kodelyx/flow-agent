@@ -5,7 +5,7 @@ Cline, Windsurf, Antigravity, Claude Code, etc.) can generate images & video dir
 
 You add it **yourself** — it's one small config block. Pick your client below.
 
-> **First:** run `./setup.sh` once so the backend auto-starts and the `flow-mcp`
+> **First:** run `cd flow-agent && ./setup.sh` once so the backend auto-starts and the `flow-mcp`
 > command exists. The MCP command you point clients at is:
 >
 > ```

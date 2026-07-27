@@ -22,7 +22,7 @@ Requirements: Python 3.10+, Chrome, Google Flow access, and the `uv` package man
 
 ```bash
 git clone https://github.com/kodelyx/flow-agent.git
-cd flow-agent
+cd flow-agent/flow-agent
 cp config.env.example config.env
 uv tool install --force .
 ```
@@ -122,14 +122,11 @@ Available aliases:
 
 ```text
 flow-agent/
-├── cli/                 # API and direct generation commands
-├── flow_cli/            # Unified CLI entry point
-├── omniflash/           # Flow bridge and generators
-├── flow-extension/      # Chrome extension
-├── flow_mcp_server.py   # MCP v2 server
-├── config.env.example
-├── flow-cli.spec
-└── flow-mcp.spec
+├── flow-agent/          # CLI, API, MCP and Flow generation backend
+├── flow-extension/      # Chrome extension bridge
+├── .github/workflows/   # Cross-platform release builds
+├── MCP.md               # MCP client setup
+└── README.md
 ```
 
 ## Security

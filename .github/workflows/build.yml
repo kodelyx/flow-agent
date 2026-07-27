@@ -25,18 +25,20 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
+        working-directory: flow-agent
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
           pip install -e .
 
       - name: Build CLI and MCP
+        working-directory: flow-agent
         run: |
           pyinstaller --clean --noconfirm flow-cli.spec
           pyinstaller --clean --noconfirm flow-mcp.spec
 
       - name: Rename binaries
-        working-directory: dist
+        working-directory: flow-agent/dist
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -53,9 +55,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: flow-${{ matrix.os }}
-          path: dist/flow-*
+          path: flow-agent/dist/flow-*
 
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: dist/flow-*
+          files: flow-agent/dist/flow-*
