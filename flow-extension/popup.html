@@ -36,21 +36,35 @@
       --radius: 12px;
     }
 
-    html,
+    html {
+      height: 100%;
+    }
+
+    /* Header, tabs and the action bar stay put; only #content scrolls. */
     body {
+      display: flex;
+      flex-direction: column;
       width: 100%;
       min-width: 320px;
-      min-height: 200px;
+      height: 100%;
+      overflow: hidden;
       background: var(--bg);
       color: var(--text);
       font-family: var(--font);
       font-size: 12px;
       line-height: 1.5;
       -webkit-font-smoothing: antialiased;
-      padding-bottom:64px;
+    }
+
+    #content {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
 
     header {
+      flex-shrink: 0;
       display: flex;
       align-items: center;
       gap: 10px;
@@ -144,26 +158,6 @@
       font-size: 10px;
       font-weight: 700;
       color: var(--accent-soft);
-    }
-
-    #log-list {
-      max-height: 440px;
-      overflow-y: auto;
-      scrollbar-width: thin;
-      scrollbar-color: var(--border) transparent;
-    }
-
-    #log-list::-webkit-scrollbar {
-      width: 4px;
-    }
-
-    #log-list::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    #log-list::-webkit-scrollbar-thumb {
-      background: var(--border);
-      border-radius: 2px;
     }
 
     .log-empty {
@@ -312,15 +306,6 @@
       color: var(--red);
     }
 
-    .footer {
-      padding: 10px 14px;
-      border-top: 1px solid var(--border);
-      background: var(--surface);
-      font-size: 10px;
-      color: var(--muted);
-      text-align: center;
-    }
-
     .quick-panel {
       padding: 14px;
       background: linear-gradient(180deg, #fff 0%, #fafbff 100%);
@@ -426,15 +411,14 @@
     .result-meta { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 11px; }
     .result-meta strong { color:var(--text); font-size:11px; }
     .result-open { flex-shrink:0; padding:7px 11px; border-radius:8px; background:var(--accent-bg); color:var(--accent); font-weight:800; text-decoration:none; }
-    .tabs { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; padding:8px 10px; position:sticky; top:0; z-index:5; background:rgba(255,255,255,.94); backdrop-filter:blur(12px); border-bottom:1px solid var(--border); }
+    .tabs { flex-shrink:0; display:grid; grid-template-columns:repeat(4,1fr); gap:4px; padding:8px 10px; background:#fff; border-bottom:1px solid var(--border); }
     .tab { border:0; outline:0; border-radius:9px; padding:8px 6px; background:transparent; color:var(--muted); font:700 10px var(--font); cursor:pointer; }
     .tab:focus-visible { box-shadow:0 0 0 2px rgba(255,55,95,.2); }
     .tab.active { color:var(--accent); background:var(--accent-bg); box-shadow:inset 0 0 0 1px rgba(255,55,95,.12); }
     .tab-panel { display:none; }
     .tab-panel.active { display:block; }
-    #panel-history.active { min-height:calc(100vh - 106px); display:flex; flex-direction:column; background:#fff; }
-    #panel-history #log-list { flex:1; }
-    #panel-history .footer { margin-top:auto; position:sticky; bottom:0; }
+    #panel-history.active { background:#fff; }
+    .log-header { position:sticky; top:0; z-index:2; }
     .settings-card { margin:14px; padding:14px; border:1px solid var(--border); border-radius:14px; background:#fff; box-shadow:0 8px 30px rgba(15,23,42,.06); }
     .settings-card h2 { font-size:14px; margin-bottom:3px; }
     .settings-card > p { color:var(--muted); font-size:10px; margin-bottom:14px; }
@@ -473,7 +457,7 @@
     .metric-mini span { color:var(--muted); font-size:8px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; }
     .token-card { display:flex; align-items:center; justify-content:space-between; padding:10px 11px; margin-bottom:10px; border-radius:10px; background:#f5f7fa; }
     #monitor-token { font-size:10px; font-weight:700; color:var(--text-dim); }
-    .monitor-actions { position:fixed; left:0; right:0; bottom:0; z-index:20; display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:10px 12px; background:rgba(255,255,255,.96); backdrop-filter:blur(14px); border-top:1px solid var(--border); box-shadow:0 -8px 24px rgba(15,23,42,.06); }
+    .monitor-actions { flex-shrink:0; display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:10px 12px; background:#fff; border-top:1px solid var(--border); box-shadow:0 -8px 24px rgba(15,23,42,.06); }
     .monitor-actions button { border:1px solid var(--border); border-radius:9px; padding:9px; background:#fff; color:var(--text); font:700 10px var(--font); cursor:pointer; }
     .monitor-actions button.primary { border:0; color:#fff; background:linear-gradient(135deg,var(--accent),var(--accent-soft)); }
     #toast { position:fixed; left:50%; bottom:72px; z-index:40; max-width:calc(100% - 28px); padding:9px 13px; border-radius:10px; background:#111827; color:#fff; font:700 10px var(--font); box-shadow:0 10px 30px rgba(15,23,42,.22); opacity:0; pointer-events:none; transform:translate(-50%,10px); transition:.2s ease; white-space:nowrap; }
@@ -502,6 +486,7 @@
     <button class="tab" data-tab="settings">Settings</button>
   </nav>
 
+  <main id="content">
   <section class="tab-panel" id="panel-settings"><div class="settings-card">
     <h2>Connection settings</h2><p>Connect this extension to your Flow Agent backend.</p>
     <label class="field-label" for="setting-server">Backend server</label>
@@ -552,6 +537,7 @@
   </div>
 
   </section>
+  </main>
 
   <div class="monitor-actions"><button class="primary" id="open-flow">Open Flow</button><button id="refresh-token">Refresh Token</button></div>
   <div id="toast" role="status" aria-live="polite"></div>
