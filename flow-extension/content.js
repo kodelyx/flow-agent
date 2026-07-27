@@ -51,20 +51,6 @@ window.addEventListener('TRPC_MEDIA_URLS', (e) => {
   }).catch(() => {});
 });
 
-// ─── Aisandbox Request Sniffer (via postMessage from MAIN world) ──
-window.addEventListener('message', (e) => {
-  if (e.data?.type !== '__FLOWKIT_SNIFF__') return;
-  const { url, body, method } = e.data;
-  if (!url) return;
-  chrome.runtime.sendMessage({
-    type: 'SNIFFED_AISANDBOX_REQUEST',
-    url,
-    method,
-    payload: body,
-    timestamp: Date.now(),
-  }).catch(() => {});
-});
-
 // ─── Video Upload Relay ─────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, _, reply) => {
   if (msg.type !== 'UPLOAD_VIDEO') return;
