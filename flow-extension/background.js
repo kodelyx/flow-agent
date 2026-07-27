@@ -83,8 +83,17 @@ function broadcastRequestLog() {
 
 // ─── Startup ────────────────────────────────────────────────
 
-chrome.runtime.onInstalled.addListener(init);
-chrome.runtime.onStartup.addListener(init);
+let initialization;
+function ensureInitialized() {
+  if (!initialization) initialization = init().catch((error) => {
+    initialization = null;
+    console.error('[Flow Agent] Initialization failed:', error);
+  });
+  return initialization;
+}
+
+chrome.runtime.onInstalled.addListener(ensureInitialized);
+chrome.runtime.onStartup.addListener(ensureInitialized);
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'reconnect') connectToAgent();
   if (alarm.name === 'keepAlive') keepAlive();
@@ -117,6 +126,8 @@ async function init() {
   chrome.alarms.create('flushOutbox', { periodInMinutes: 0.25 });
   flushOutbox();
 }
+
+ensureInitialized();
 
 // ─── Token Capture ──────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Flow Agent",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Google Flow image and video generation with health, credits, models, history, CLI and MCP support",
   "icons": {
     "16": "icon16.png",

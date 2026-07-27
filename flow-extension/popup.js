@@ -242,6 +242,10 @@ chrome.runtime.sendMessage({ type: 'REQUEST_LOG' }, (data) => {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'REQUEST_LOG_UPDATE' && message.log) renderLog(message.log);
+  if (message.type === 'STATUS_PUSH') {
+    refreshMonitor();
+    refreshQuickStatus();
+  }
 });
 
 // ── Quick generation ────────────────────────────────────────
@@ -409,3 +413,4 @@ updateQuickFields();
 refreshQuickStatus();
 refreshMonitor();
 setInterval(refreshMonitor, 3000);
+setInterval(refreshQuickStatus, 10000);
