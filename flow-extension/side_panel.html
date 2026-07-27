@@ -1006,19 +1006,6 @@
         animation: none !important;
       }
     }
-
-    .quick-gen { padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
-    .quick-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:9px; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }
-    .quick-status { color:var(--muted); font-size:10px; font-weight:600; text-transform:none; }
-    .quick-status.online { color:var(--green); }
-    .quick-gen textarea, .quick-gen select { width:100%; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:7px; padding:8px; font:inherit; outline:none; }
-    .quick-gen textarea { min-height:66px; resize:vertical; margin-bottom:7px; }
-    .quick-gen textarea:focus, .quick-gen select:focus { border-color:var(--accent); }
-    .quick-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; margin-bottom:7px; }
-    #quick-generate { width:100%; }
-    #quick-result { display:none; margin-top:8px; padding:8px; border-radius:7px; background:var(--bg); color:var(--text-dim); word-break:break-word; }
-    #quick-result.show { display:block; }
-    #quick-result a { color:var(--accent-soft); }
   </style>
 </head>
 
@@ -1099,19 +1086,6 @@
   <div class="token-line">
     <span id="token-status" class="bad">no token</span>
   </div>
-
-  <section class="quick-gen">
-    <div class="quick-head"><span>Quick Generate</span><span class="quick-status" id="backend-status">Checking… · Credits —</span></div>
-    <textarea id="quick-prompt" placeholder="Describe the image or video…"></textarea>
-    <div class="quick-grid">
-      <select id="quick-type"><option value="image">Image</option><option value="video">Video</option></select>
-      <select id="quick-model"><option value="gem_pix_2" selected>Nano Banana 2</option><option value="narwhal">Nano Banana</option><option value="harbor_seal">Nano Banana Lite</option></select>
-      <select id="quick-aspect"><option value="landscape">Landscape</option><option value="portrait">Portrait</option><option value="square">Square</option></select>
-      <select id="quick-duration" hidden><option value="5">5 seconds</option><option value="8" selected>8 seconds</option></select>
-    </div>
-    <button class="btn btn-primary" id="quick-generate">Generate with Flow</button>
-    <div id="quick-result"></div>
-  </section>
 
   <!-- Request log -->
   <div class="log-section">
