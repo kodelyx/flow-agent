@@ -196,6 +196,7 @@ class ImageGenerationRequest(BaseModel):
     user: Optional[str] = None
     image_base64: Optional[str] = Field(None, description="Optional base64 reference image for image-to-image")
     ref_media_ids: Optional[List[str]] = Field(None, description="Optional reference image media IDs (up to 10)")
+    seed: Optional[int] = Field(None, ge=0, le=4294967295, description="Explicit seed for reproducible generation; timestamp-derived when omitted")
 
 
 class VideoGenerationRequest(BaseModel):
@@ -207,6 +208,10 @@ class VideoGenerationRequest(BaseModel):
     ref_media_ids: Optional[List[str]] = Field(None, description="Optional reference image media IDs (up to 10)")
     start_media_id: Optional[str] = Field(None, description="Optional pre-uploaded start image or video media ID")
     is_video: Optional[bool] = Field(False, description="True if the pre-uploaded reference is a video")
+    seed: Optional[int] = Field(None, ge=0, le=4294967295, description="Explicit seed for reproducible generation; random when omitted")
+    end_media_id: Optional[str] = Field(None, description="Optional pre-uploaded end-frame media ID; enables first-last frame mode")
+    end_image_base64: Optional[str] = Field(None, description="Optional base64 end frame; uploaded automatically for first-last frame mode")
+    video_model: Optional[str] = Field(None, description="Override the Flow videoModelKey (defaults to abra_t2v_<duration>s)")
 
 
 # Extension WebSocket and Callback Endpoints
@@ -291,6 +296,7 @@ async def openai_generate_image(req: ImageGenerationRequest, x_client_id: Option
 
     try:
         tasks = []
+        seed_offset = 0
         for chunk_size in chunks:
             tasks.append(
                 generate_image(
@@ -300,9 +306,13 @@ async def openai_generate_image(req: ImageGenerationRequest, x_client_id: Option
                     project_id=project_id,
                     count=chunk_size,
                     ref_media_ids=ref_media_ids,
-                    model=req.model
+                    model=req.model,
+                    # Offset per chunk so a pinned seed still yields n distinct
+                    # images instead of repeating the first four.
+                    seed=None if req.seed is None else req.seed + seed_offset,
                 )
             )
+            seed_offset += chunk_size
 
         # Run requests concurrently using asyncio.gather
         results_lists = await asyncio.gather(*tasks, return_exceptions=True)
@@ -467,20 +477,53 @@ async def openai_generate_video(req: VideoGenerationRequest, x_client_id: Option
                 os.remove(temp_img_path)
             raise HTTPException(status_code=500, detail=f"Asset upload error: {str(e)}")
 
+    # Optional end frame. Uploading it here means the dispatch below can pick
+    # first-last mode purely on whether we ended up with an end media ID.
+    end_media_id = req.end_media_id
+    temp_end_path = None
+    if req.end_image_base64 and not end_media_id:
+        b64_end = req.end_image_base64
+        if "," in b64_end:
+            b64_end = b64_end.split(",")[1]
+        temp_end_path = os.path.join(
+            OUTPUT_DIR, f"fl_end_{int(time.time())}_{uuid.uuid4().hex[:6]}.png"
+        )
+        try:
+            with open(temp_end_path, "wb") as f:
+                f.write(base64.b64decode(b64_end))
+            from omniflash.generators.i2v import upload_image
+            end_media_id = await upload_image(active_bridge, temp_end_path, project_id)
+            if not end_media_id:
+                raise HTTPException(status_code=500, detail="Failed to upload end image to Google Flow.")
+        except HTTPException:
+            raise
+        except Exception as e:
+            log.exception("Error uploading end frame")
+            raise HTTPException(status_code=500, detail=f"End frame upload error: {str(e)}")
+
+    if end_media_id and not image_media_id:
+        raise HTTPException(
+            status_code=400,
+            detail="First-last frame mode needs a start image too: pass start_media_id or image_base64 alongside the end frame.",
+        )
+
     try:
         # Submit generation
         if is_video_input and image_media_id:
             from omniflash.generators.v2v import edit_video
-            media_ids = await edit_video(active_bridge, req.prompt, aspect_key, project_id, image_media_id, duration=req.duration, ref_media_ids=req.ref_media_ids)
+            media_ids = await edit_video(active_bridge, req.prompt, aspect_key, project_id, image_media_id, duration=req.duration, ref_media_ids=req.ref_media_ids, seed=req.seed)
+        elif end_media_id and image_media_id:
+            from omniflash.generators.i2v import generate_video_fl
+            media_ids = await generate_video_fl(active_bridge, req.prompt, aspect_key, project_id, image_media_id, end_media_id, duration=req.duration, seed=req.seed, video_model=req.video_model)
         elif req.ref_media_ids:
             from omniflash.generators.i2v import generate_video_r2v
-            media_ids = await generate_video_r2v(active_bridge, req.prompt, aspect_key, project_id, req.ref_media_ids, duration=req.duration, count=req.n)
+            media_ids = await generate_video_r2v(active_bridge, req.prompt, aspect_key, project_id, req.ref_media_ids, duration=req.duration, count=req.n, seed=req.seed, video_model=req.video_model)
         elif image_media_id:
             from omniflash.generators.i2v import generate_video_i2v
-            media_ids = await generate_video_i2v(active_bridge, req.prompt, aspect_key, project_id, image_media_id, duration=req.duration, count=req.n)
+            media_ids = await generate_video_i2v(active_bridge, req.prompt, aspect_key, project_id, image_media_id, duration=req.duration, count=req.n, seed=req.seed, video_model=req.video_model)
         else:
             from omniflash.generators.t2v import generate_video
-            media_ids = await generate_video(active_bridge, req.prompt, aspect_key, project_id, duration=req.duration, count=req.n)
+            media_ids = await generate_video(active_bridge, req.prompt, aspect_key, project_id, duration=req.duration, count=req.n, seed=req.seed, video_model=req.video_model)
     except Exception as e:
         if temp_img_path and os.path.exists(temp_img_path):
             try:
@@ -488,6 +531,12 @@ async def openai_generate_video(req: VideoGenerationRequest, x_client_id: Option
             except Exception:
                 pass
         raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        if temp_end_path and os.path.exists(temp_end_path):
+            try:
+                os.remove(temp_end_path)
+            except Exception:
+                pass
 
     # Clean up temp upload image immediately since it's uploaded to Google Flow
     if temp_img_path and os.path.exists(temp_img_path):

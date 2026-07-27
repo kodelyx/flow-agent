@@ -7,7 +7,7 @@ import random
 
 from ..config import CLIENT_CTX, ENDPOINTS
 from .. import media_store
-from .common import build_client_context, build_generation_context
+from .common import build_client_context, build_generation_context, resolve_seed
 
 log = logging.getLogger("omniflash.generators.i2v")
 
@@ -51,17 +51,18 @@ async def upload_image(bridge, image_path: str, project_id: str = None) -> str |
 
 
 async def generate_video_i2v(bridge, prompt: str, aspect: str, project_id: str,
-                              image_media_id: str, duration: int = 8, count: int = 1) -> list[str] | None:
+                              image_media_id: str, duration: int = 8, count: int = 1,
+                              seed: int = None, video_model: str = None) -> list[str] | None:
     """Generate video from a start image. Returns list of media_ids."""
-    model_key = f"abra_t2v_{duration}s"
+    model_key = video_model or f"abra_t2v_{duration}s"
 
     requests = []
-    for _ in range(count):
+    for i in range(count):
         requests.append({
             "aspectRatio": aspect,
             "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
             "videoModelKey": model_key,
-            "seed": random.randint(1, 9999),
+            "seed": resolve_seed(seed, i),
             "metadata": {},
             "startImage": {"mediaId": image_media_id},
         })
@@ -104,18 +105,19 @@ async def generate_video_i2v(bridge, prompt: str, aspect: str, project_id: str,
 
 async def generate_video_fl(bridge, prompt: str, aspect: str, project_id: str,
                              start_image_id: str, end_image_id: str,
-                             duration: int = 8) -> list[str] | None:
+                             duration: int = 8, seed: int = None,
+                             video_model: str = None) -> list[str] | None:
     """Generate video with First+Last frame control.
 
     Video transitions smoothly from start_image to end_image.
     """
-    model_key = f"abra_t2v_{duration}s"
+    model_key = video_model or f"abra_t2v_{duration}s"
 
     request = {
         "aspectRatio": aspect,
         "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
         "videoModelKey": model_key,
-        "seed": random.randint(1, 9999),
+        "seed": resolve_seed(seed),
         "metadata": {},
         "startImage": {"mediaId": start_image_id},
         "endImage": {"mediaId": end_image_id},
@@ -160,9 +162,10 @@ async def generate_video_fl(bridge, prompt: str, aspect: str, project_id: str,
 
 async def generate_video_r2v(bridge, prompt: str, aspect: str, project_id: str,
                               ref_media_ids: list[str],
-                              duration: int = 8, count: int = 1) -> list[str] | None:
+                              duration: int = 8, count: int = 1,
+                              seed: int = None, video_model: str = None) -> list[str] | None:
     """Generate video from reference images (character/style consistency)."""
-    model_key = f"abra_t2v_{duration}s"
+    model_key = video_model or f"abra_t2v_{duration}s"
 
     ref_images = [
         {"mediaId": mid, "imageUsageType": "IMAGE_USAGE_TYPE_ASSET"}
@@ -170,12 +173,12 @@ async def generate_video_r2v(bridge, prompt: str, aspect: str, project_id: str,
     ]
 
     requests = []
-    for _ in range(count):
+    for i in range(count):
         requests.append({
             "aspectRatio": aspect,
             "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
             "videoModelKey": model_key,
-            "seed": random.randint(1, 9999),
+            "seed": resolve_seed(seed, i),
             "metadata": {},
             "referenceImages": ref_images,
         })

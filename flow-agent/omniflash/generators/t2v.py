@@ -5,23 +5,24 @@ import random
 import uuid
 
 from ..config import ENDPOINTS
-from .common import build_client_context, build_generation_context
+from .common import build_client_context, build_generation_context, resolve_seed
 
 log = logging.getLogger("omniflash.generators.t2v")
 
 
 async def generate_video(bridge, prompt: str, aspect: str, project_id: str,
-                         duration: int = 10, count: int = 1) -> list[str] | None:
+                         duration: int = 10, count: int = 1,
+                         seed: int = None, video_model: str = None) -> list[str] | None:
     """Submit T2V generation request. Returns list of media_ids."""
-    model_key = f"abra_t2v_{duration}s"
+    model_key = video_model or f"abra_t2v_{duration}s"
 
     requests = []
-    for _ in range(count):
+    for i in range(count):
         requests.append({
             "aspectRatio": aspect,
             "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
             "videoModelKey": model_key,
-            "seed": random.randint(1, 9999),
+            "seed": resolve_seed(seed, i),
             "metadata": {},
         })
 
