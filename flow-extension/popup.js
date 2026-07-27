@@ -413,4 +413,3 @@ updateQuickFields();
 refreshQuickStatus();
 refreshMonitor();
 setInterval(refreshMonitor, 3000);
-setInterval(refreshQuickStatus, 10000);
