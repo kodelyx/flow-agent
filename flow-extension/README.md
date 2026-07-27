@@ -6,7 +6,7 @@ Chrome bridge for [kodelyx/flow-agent](https://github.com/kodelyx/flow-agent). I
 
 - Live backend health and Flow credit status
 - Quick image and video generation from the popup
-- Nano Banana 2 (`gem_pix_2`) as the default image model
+- Nano Banana 2 as the default image model
 - Model, aspect ratio, and video duration controls
 
 ## Install
