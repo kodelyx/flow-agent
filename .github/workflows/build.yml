@@ -34,8 +34,8 @@ jobs:
       - name: Build CLI and MCP
         working-directory: flow-agent
         run: |
-          pyinstaller --clean --noconfirm flow-cli.spec
-          pyinstaller --clean --noconfirm flow-mcp.spec
+          pyinstaller --clean --noconfirm specs/flow-cli.spec
+          pyinstaller --clean --noconfirm specs/flow-mcp.spec
 
       - name: Rename binaries
         working-directory: flow-agent/dist

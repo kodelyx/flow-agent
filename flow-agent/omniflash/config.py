@@ -14,7 +14,8 @@ else:
     ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MEDIA_ID_FILE = os.path.join(ROOT_DIR, "media-id.js")
 
-# Load settings from config.env (all settings live there; no secrets).
+# Load user settings from .env. Legacy config.env remains supported so older
+# installations continue to work after upgrading.
 # Uses setdefault so a real environment variable (shell / launchd) wins over
 # the file — matching the MCP server's loader.
 def _load_env_file(path):
@@ -29,6 +30,7 @@ def _load_env_file(path):
                 key, val = line.split("=", 1)
                 os.environ.setdefault(key.strip(), val.strip().strip("'\""))
 
+_load_env_file(os.path.join(ROOT_DIR, ".env"))
 _load_env_file(os.path.join(ROOT_DIR, "config.env"))
 
 # ─── Project ─────────────────────────────────────────────────
@@ -57,7 +59,7 @@ if DEFAULT_IMAGE_MODEL not in IMAGE_MODELS.values():
 # ─── Hardcoded constants (never change) ──────────────────────
 
 API_KEY = os.environ.get("API_KEY", "AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY")
-API_BASE = os.environ.get("API_BASE", "https://aisandbox-pa.googleapis.com")
+API_BASE = "https://aisandbox-pa.googleapis.com"
 
 CLIENT_CTX = {
     "tool": "PINHOLE",

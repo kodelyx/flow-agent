@@ -2,7 +2,7 @@
 # ============================================================
 #  Flow Agent — one-command setup (macOS)
 #  Run this ONCE on a new machine:
-#      ./setup.sh
+#      ./scripts/setup.sh
 #  It will:
 #    1. Install the `flow` + `flow-mcp` CLI
 #    2. Make the backend auto-start on login (LaunchAgent)
@@ -17,7 +17,8 @@ say()  { printf "%s\n" "${GREEN}✔${NC} $*"; }
 warn() { printf "%s\n" "${YELLOW}!${NC} $*"; }
 step() { printf "\n%s\n" "${BOLD}▶ $*${NC}"; }
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LABEL="com.flow.agent"
 PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
 LOG="$HOME/Library/Logs/flow-agent.log"
@@ -25,16 +26,16 @@ LOG="$HOME/Library/Logs/flow-agent.log"
 # ---- 1. Install the CLI -------------------------------------------------
 step "1/2  Installing the flow CLI"
 if command -v uv >/dev/null 2>&1; then
-  ( cd "$HERE" && uv tool install --force . >/dev/null )
+  ( cd "$PROJECT_DIR" && uv tool install --force . >/dev/null )
   say "Installed with uv"
 elif command -v pipx >/dev/null 2>&1; then
-  ( cd "$HERE" && pipx install --force . >/dev/null )
+  ( cd "$PROJECT_DIR" && pipx install --force . >/dev/null )
   say "Installed with pipx"
 else
   warn "Neither 'uv' nor 'pipx' found."
   echo "  Install uv first (one line):"
   echo "     curl -LsSf https://astral.sh/uv/install.sh | sh"
-  echo "  then re-run ./setup.sh"
+  echo "  then re-run ./scripts/setup.sh"
   exit 1
 fi
 
@@ -70,7 +71,7 @@ if [ "$OS" = "Darwin" ]; then
         <string>serve</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>${HERE}</string>
+    <string>${PROJECT_DIR}</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -103,7 +104,7 @@ After=network.target
 
 [Service]
 ExecStart=${FLOW_BIN} serve
-WorkingDirectory=${HERE}
+WorkingDirectory=${PROJECT_DIR}
 Restart=always
 StandardOutput=journal
 StandardError=journal
@@ -133,7 +134,7 @@ ${BOLD}Next: connect your AI client to the MCP server.${NC}
   small config into whatever you use (Claude Desktop / Cursor / Cline /
   Antigravity / etc). Full copy-paste snippets for each are in:
 
-      ${BOLD}MCP.md${NC}
+      ${BOLD}../MCP.md${NC}
 
   The command to point your client at is:
       ${FLOW_MCP_BIN}
@@ -146,5 +147,5 @@ Handy commands:
   flow credits     # remaining Google Flow credits
   tail -f "$LOG"   # watch backend logs
 
-To stop auto-start:  ./uninstall.sh
+To stop auto-start:  ./scripts/uninstall.sh
 DONE

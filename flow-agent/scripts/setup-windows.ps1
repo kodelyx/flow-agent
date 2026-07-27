@@ -1,10 +1,11 @@
 # ============================================================
 #  Flow Agent — Windows Setup Script
 #  Run this in PowerShell:
-#      .\setup-windows.ps1
+#      .\scripts\setup-windows.ps1
 # ============================================================
 
 $ErrorActionPreference = "Stop"
+$ProjectDir = Split-Path -Parent $PSScriptRoot
 
 Write-Host "▶ 1/2 Locating Flow Agent Executable" -ForegroundColor Cyan
 
@@ -13,10 +14,10 @@ $FlowBin = Get-Command flow.exe -ErrorAction SilentlyContinue | Select-Object -E
 
 # 2. Check local directory for prebuilt binaries
 if (-not $FlowBin) {
-    if (Test-Path "$PSScriptRoot\flow-cli-windows.exe") {
-        $FlowBin = Resolve-Path "$PSScriptRoot\flow-cli-windows.exe"
-    } elseif (Test-Path "$PSScriptRoot\flow-agent\dist\flow-cli-windows.exe") {
-        $FlowBin = Resolve-Path "$PSScriptRoot\flow-agent\dist\flow-cli-windows.exe"
+    if (Test-Path "$ProjectDir\flow-cli-windows.exe") {
+        $FlowBin = Resolve-Path "$ProjectDir\flow-cli-windows.exe"
+    } elseif (Test-Path "$ProjectDir\dist\flow-cli-windows.exe") {
+        $FlowBin = Resolve-Path "$ProjectDir\dist\flow-cli-windows.exe"
     }
 }
 
@@ -38,7 +39,7 @@ $WshShell = New-Object -ComObject WScript.Shell
 $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
 $Shortcut.TargetPath = $FlowBin
 $Shortcut.Arguments = "serve"
-$Shortcut.WorkingDirectory = $PSScriptRoot
+$Shortcut.WorkingDirectory = $ProjectDir
 $Shortcut.Save()
 
 Write-Host "✔ Shortcut created in Startup folder: $ShortcutPath" -ForegroundColor Green

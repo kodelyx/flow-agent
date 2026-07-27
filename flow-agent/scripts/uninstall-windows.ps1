@@ -1,7 +1,7 @@
 # ============================================================
 #  Flow Agent — Windows Uninstall Script
 #  Run this in PowerShell:
-#      .\uninstall-windows.ps1
+#      .\scripts\uninstall-windows.ps1
 # ============================================================
 
 $ErrorActionPreference = "Stop"

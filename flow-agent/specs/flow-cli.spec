@@ -1,12 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+from PyInstaller.utils.hooks import collect_submodules
+
+project_root = os.path.abspath(os.path.join(SPECPATH, '..'))
+hiddenimports = collect_submodules('cli') + collect_submodules('omniflash')
 
 a = Analysis(
-    ['flow_mcp_server.py'],
-    pathex=[],
+    [os.path.join(project_root, 'flow_cli', 'main.py')],
+    pathex=[project_root],
     binaries=[],
     datas=[],
-    hiddenimports=[],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -22,7 +27,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='flow-mcp',
+    name='flow-cli',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -136,7 +136,7 @@ security = HTTPBearer(auto_error=False)
 async def verify_api_key(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
     server_key = os.environ.get("SERVER_API_KEY")
     if not server_key:
-        # If no key is defined in config.env, auth is skipped (disabled)
+        # If no key is defined in .env, auth is skipped (disabled)
         return
     if not credentials or credentials.credentials != server_key:
         raise HTTPException(

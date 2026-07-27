@@ -23,7 +23,6 @@ Requirements: Python 3.10+, Chrome, Google Flow access, and the `uv` package man
 ```bash
 git clone https://github.com/kodelyx/flow-agent.git
 cd flow-agent/flow-agent
-cp config.env.example config.env
 uv tool install --force .
 ```
 
@@ -123,6 +122,10 @@ Available aliases:
 ```text
 flow-agent/
 ├── flow-agent/          # CLI, API, MCP and Flow generation backend
+│   ├── specs/           # PyInstaller build specifications
+│   ├── scripts/         # Setup and uninstall scripts
+│   ├── requirements/    # Dependency lists
+│   └── .env             # User-changeable settings only
 ├── flow-extension/      # Chrome extension bridge
 ├── .github/workflows/   # Cross-platform release builds
 ├── MCP.md               # MCP client setup
@@ -132,7 +135,7 @@ flow-agent/
 ## Security
 
 - Never commit browser cookies, GitHub tokens, tunnel credentials, or generated private media.
-- The repository ignores local `config.env`, `github-token`, `cloudflared/`, outputs, logs, and build artifacts.
+- The repository ignores legacy `config.env`, `github-token`, `cloudflared/`, outputs, logs, and build artifacts.
 - Set `SERVER_API_KEY` before exposing the API outside localhost.
 
 ## License

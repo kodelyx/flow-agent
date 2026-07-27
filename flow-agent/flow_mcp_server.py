@@ -10,31 +10,32 @@ import tempfile
 import shutil
 from urllib.parse import urlparse, unquote
 
-# Load config.env so this MCP process sees the same ports/settings as the
-# backend, even when launched standalone by an AI client.
+# Load .env so MCP sees the same user settings as the backend. Legacy
+# config.env remains supported for existing installations.
 def _load_env_files():
     if getattr(sys, 'frozen', False):
         root = os.path.dirname(sys.executable)
     else:
         root = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(root, "config.env")
-    if not os.path.exists(path):
-        return
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, val = line.split("=", 1)
-                os.environ.setdefault(key.strip(), val.strip().strip("'\""))
-    except Exception:
-        pass
+    for filename in (".env", "config.env"):
+        path = os.path.join(root, filename)
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, val = line.split("=", 1)
+                    os.environ.setdefault(key.strip(), val.strip().strip("'\""))
+        except Exception:
+            pass
 
 _load_env_files()
 
 # Flow Agent Backend Base URL — honour the same env vars the backend binds to,
-# so MCP keeps working even if the port is changed in config.env.
+# so MCP keeps working even if the port is changed in .env.
 _API_HOST = os.environ.get("OPENAI_API_HOST", "127.0.0.1")
 _API_PORT = os.environ.get("OPENAI_API_PORT", "8001")
 FLOW_API_URL = os.environ.get("FLOW_API_URL", f"http://{_API_HOST}:{_API_PORT}")
