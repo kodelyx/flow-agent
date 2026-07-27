@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Flow Agent",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Google Flow image and video generation with health, credits, models, history, CLI and MCP support",
   "icons": {
     "16": "icon16.png",
@@ -22,7 +22,6 @@
     "https://aisandbox-pa.googleapis.com/*",
     "https://aisandbox-pa.sandbox.googleapis.com/*",
     "https://storage.googleapis.com/*",
-    "http://127.0.0.1:8100/*",
     "http://127.0.0.1:8001/*",
     "http://localhost:8001/*",
     "https://flow.kodelyx.in/*"

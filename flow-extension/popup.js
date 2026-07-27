@@ -219,7 +219,7 @@ document.getElementById('refresh-token').addEventListener('click', async () => {
   }
 });
 chrome.storage.local.get(['customServerIp', 'clientId'], (data) => {
-  document.getElementById('setting-server').value = data.customServerIp || '127.0.0.1:8001';
+  document.getElementById('setting-server').value = data.customServerIp || CONFIG.DEFAULT_SERVER_HOST;
   document.getElementById('setting-client').value = data.clientId || '';
 });
 
@@ -252,7 +252,7 @@ chrome.runtime.onMessage.addListener((message) => {
 function getBackendBase() {
   return new Promise((resolve) => {
     chrome.storage.local.get(['customServerIp'], (data) => {
-      const raw = String(data.customServerIp || '127.0.0.1:8001').trim().replace(/\/$/, '');
+      const raw = String(data.customServerIp || CONFIG.DEFAULT_SERVER_HOST).trim().replace(/\/$/, '');
       if (/^https?:\/\//i.test(raw)) return resolve(raw);
       const local = /^(localhost|127\.0\.0\.1)(:|$)/i.test(raw);
       resolve(`${local ? 'http' : 'https'}://${raw}`);
@@ -284,12 +284,20 @@ async function apiJson(path, options = {}) {
 async function refreshQuickStatus() {
   const credits = document.getElementById('quick-credits');
   try {
-    await apiJson('/health');
-    const creditData = await apiJson('/v1/credits');
+    let creditData;
+    try {
+      creditData = await runtimeMessage({ type: 'GET_CLIENT_CREDITS' });
+    } catch (backgroundError) {
+      console.warn('[Flow Agent] Background credits failed, trying direct API:', backgroundError);
+      creditData = await apiJson('/v1/credits');
+    }
     const balance = creditData.data?.credits ?? creditData.credits ?? '—';
     credits.textContent = String(balance);
+    credits.title = `Current client credits: ${balance}`;
   } catch (error) {
-    credits.textContent = '—';
+    credits.textContent = 'ERR';
+    credits.title = error.message;
+    console.error('[Flow Agent] Credits unavailable:', error);
   }
 }
 

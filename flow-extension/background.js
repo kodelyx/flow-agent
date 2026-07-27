@@ -7,7 +7,6 @@
 
 importScripts('config.js');
 
-const AGENT_WS_URL = 'ws://127.0.0.1:8001/ws';
 let callbackUrl = 'http://127.0.0.1:3001/api/ext/callback';
 // NOTE: This is a browser-restricted public API key — safe to ship in extension bundles.
 const API_KEY = 'AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY';
@@ -18,6 +17,7 @@ let callbackSecret = null;  // Auth secret for HTTP callback, received from serv
 let state = 'off'; // off | idle | running
 let manualDisconnect = false;
 let extensionClientId = '';
+let connectedServerHost = CONFIG.DEFAULT_SERVER_HOST;
 
 function normalizeCallbackUrl(value) {
   try {
@@ -96,7 +96,13 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 });
 
 async function init() {
-  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  if (chrome.sidePanel?.setPanelBehavior) {
+    try {
+      await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+    } catch (error) {
+      console.warn('[Flow Agent] Side Panel click behavior unavailable:', error.message);
+    }
+  }
   const data = await chrome.storage.local.get(['flowKey', 'metrics', 'callbackSecret', 'callbackUrl', 'requestLog']);
   if (data.flowKey) flowKey = data.flowKey;
   if (data.metrics) Object.assign(metrics, data.metrics);
@@ -265,6 +271,7 @@ async function connectToAgent() {
 
   const data = await chrome.storage.local.get(['customServerIp', 'clientId']);
   const serverIp = data.customServerIp || CONFIG.DEFAULT_SERVER_HOST;
+  connectedServerHost = serverIp;
   const isLocal = /^(127\.0\.0\.1|localhost|192\.168\.|10\.)/.test(serverIp);
   const wsScheme = isLocal ? 'ws' : 'wss';
   const httpScheme = isLocal ? 'http' : 'https';
@@ -906,6 +913,26 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
     return true;
   }
 
+  if (msg.type === 'GET_CLIENT_CREDITS') {
+    const host = String(connectedServerHost || CONFIG.DEFAULT_SERVER_HOST).trim().replace(/\/$/, '');
+    const hostWithoutScheme = host.replace(/^https?:\/\//i, '');
+    const local = /^(127\.0\.0\.1|localhost|192\.168\.|10\.)(:|$)/.test(hostWithoutScheme);
+    const base = /^https?:\/\//i.test(host) ? host : `${local ? 'http' : 'https'}://${host}`;
+    chrome.storage.local.get(['clientId']).then(({ clientId }) => fetch(`${base}/v1/credits`, {
+      headers: (extensionClientId || clientId) ? { 'X-Client-Id': extensionClientId || clientId } : {},
+    }))
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+        reply(data);
+      })
+      .catch((error) => {
+        console.error('[Flow Agent] Credit request failed:', error);
+        reply({ error: error.message });
+      });
+    return true;
+  }
+
   if (msg.type === 'CLEAR_REQUEST_LOG') {
     requestLog = [];
     chrome.storage.local.remove('requestLog').then(() => {
@@ -961,23 +988,6 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
 
   if (msg.type === 'TRPC_MEDIA_URLS') {
     handleTrpcMediaUrls(msg.trpcUrl, msg.body);
-    reply({ ok: true });
-    return true;
-  }
-
-  if (msg.type === 'SNIFFED_AISANDBOX_REQUEST') {
-    console.log('[Flow Agent] SNIFFED aisandbox request:', msg.url);
-    fetch('http://127.0.0.1:8100/api/ext/callback', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: 'sniffed_video_request',
-        url: msg.url,
-        method: msg.method,
-        payload: msg.payload,
-        timestamp: msg.timestamp,
-      }),
-    }).catch((e) => console.error('[Flow Agent] Failed to forward sniffed request:', e));
     reply({ ok: true });
     return true;
   }
