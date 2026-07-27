@@ -97,6 +97,71 @@ function sendMessage(payload) {
   });
 }
 
+async function backendBase() {
+  const data = await chrome.storage.local.get(['customServerIp']);
+  const raw = String(data.customServerIp || '127.0.0.1:8001').trim().replace(/\/$/, '');
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return /^(localhost|127\.0\.0\.1)(:|$)/i.test(raw) ? `http://${raw}` : `https://${raw}`;
+}
+
+async function backendJson(path, options = {}) {
+  const response = await fetch(`${await backendBase()}${path}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error?.message || body.detail || `HTTP ${response.status}`);
+  return body;
+}
+
+async function refreshBackendStatus() {
+  const el = document.getElementById('backend-status');
+  try {
+    const [health, credits] = await Promise.all([backendJson('/health'), backendJson('/v1/credits')]);
+    const count = credits.total_credits ?? credits.credits ?? credits.data?.credits ?? '—';
+    const ready = health.status === 'healthy' && health.extension_connected && health.has_flow_key;
+    el.textContent = `${ready ? 'Flow ready' : 'Needs connection'} · Credits ${count}`;
+    el.classList.toggle('online', ready);
+  } catch {
+    el.textContent = 'Backend offline · Credits —';
+    el.classList.remove('online');
+  }
+}
+
+async function quickGenerate() {
+  const button = document.getElementById('quick-generate');
+  const result = document.getElementById('quick-result');
+  const prompt = document.getElementById('quick-prompt').value.trim();
+  if (!prompt) return toast('Prompt required', 'err');
+  const type = document.getElementById('quick-type').value;
+  button.disabled = true;
+  button.textContent = 'Generating…';
+  result.className = 'show';
+  result.textContent = 'Request submitted…';
+  try {
+    const aspect = document.getElementById('quick-aspect').value;
+    const sizes = { landscape: '1792x1024', portrait: '1024x1792', square: '1024x1024' };
+    const payload = type === 'image'
+      ? { prompt, model: document.getElementById('quick-model').value, size: sizes[aspect] || sizes.landscape, n: 1 }
+      : { prompt, aspect, duration: Number(document.getElementById('quick-duration').value), n: 1 };
+    const data = await backendJson(type === 'image' ? '/v1/images/generations' : '/v1/videos/generations', { method: 'POST', body: JSON.stringify(payload) });
+    const url = data.data?.[0]?.url || data.url || data.video_url || data.output_url;
+    if (url) {
+      result.innerHTML = `<a href="${escHtml(url)}" target="_blank">Open generated ${type}</a>`;
+    } else {
+      result.textContent = data.status ? `Status: ${data.status}` : 'Generation started successfully.';
+    }
+    toast('Generation request successful', 'ok');
+    refreshBackendStatus();
+  } catch (err) {
+    result.textContent = `Error: ${err.message}`;
+    toast(err.message, 'err');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Generate with Flow';
+  }
+}
+
 // ── Status update ────────────────────────────────────────────
 
 let _status = null;
@@ -467,6 +532,16 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchStatus();
   fetchLog();
   startTickers();
+  refreshBackendStatus();
+  document.getElementById('quick-generate').addEventListener('click', quickGenerate);
+  document.getElementById('quick-type').addEventListener('change', (event) => {
+    const video = event.target.value === 'video';
+    document.getElementById('quick-model').hidden = video;
+    document.getElementById('quick-duration').hidden = !video;
+    const aspect = document.getElementById('quick-aspect');
+    aspect.querySelector('option[value="square"]').disabled = video;
+    if (video && aspect.value === 'square') aspect.value = 'landscape';
+  });
 
   // Load custom settings
   chrome.storage.local.get(['customServerIp', 'clientId'], (data) => {
