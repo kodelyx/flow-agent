@@ -6,19 +6,42 @@ import os
 import random
 
 from ..config import CLIENT_CTX, ENDPOINTS
-from .. import media_store
 from .common import build_client_context, build_generation_context
+from flow_server.media_history import get_revalidated_upload_id, record_uploaded_media
+from flow_server.media_types import sniff_media_type
 
 log = logging.getLogger("flow_engine.generators.i2v")
 
 
-async def upload_image(bridge, image_path: str, project_id: str = None) -> str | None:
+async def upload_image(
+    bridge,
+    image_path: str,
+    project_id: str = None,
+    *,
+    force_upload: bool = False,
+) -> str | None:
     """Upload a local image to Flow. Returns media_id.
 
-    Auto-saves filename  media_id to media-id.js.
+    A content-addressed cached ID is remotely revalidated before it is reused.
     """
     from ..config import DEFAULT_PROJECT
     project_id = project_id or DEFAULT_PROJECT
+    image_path = os.path.abspath(image_path)
+    if not os.path.isfile(image_path):
+        raise FileNotFoundError(f"Image not found: {image_path}")
+
+    mime_type = sniff_media_type(image_path)
+    if not mime_type.startswith("image/"):
+        raise ValueError(
+            f"Expected an image file, but {os.path.basename(image_path)} contains {mime_type}."
+        )
+
+    if not force_upload:
+        cached_media_id = await get_revalidated_upload_id(
+            image_path, bridge, project_id=project_id
+        )
+        if cached_media_id:
+            return cached_media_id
 
     with open(image_path, "rb") as f:
         img_data = base64.b64encode(f.read()).decode()
@@ -45,7 +68,12 @@ async def upload_image(bridge, image_path: str, project_id: str = None) -> str |
     log.info("Image uploaded! media_id=%s", media_id)
 
     if media_id:
-        media_store.save(os.path.basename(image_path), media_id)
+        record_uploaded_media(
+            image_path,
+            media_id,
+            project_id=project_id,
+            mime_type=mime_type,
+        )
 
     return media_id
 
@@ -104,27 +132,29 @@ async def generate_video_i2v(bridge, prompt: str, aspect: str, project_id: str,
 
 async def generate_video_fl(bridge, prompt: str, aspect: str, project_id: str,
                              start_image_id: str, end_image_id: str,
-                             duration: int = 8) -> list[str] | None:
+                             duration: int = 8, count: int = 1) -> list[str] | None:
     """Generate video with First+Last frame control.
 
     Video transitions smoothly from start_image to end_image.
     """
     model_key = f"abra_t2v_{duration}s"
 
-    request = {
-        "aspectRatio": aspect,
-        "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
-        "videoModelKey": model_key,
-        "seed": random.randint(1, 9999),
-        "metadata": {},
-        "startImage": {"mediaId": start_image_id},
-        "endImage": {"mediaId": end_image_id},
-    }
+    requests = []
+    for _ in range(count):
+        requests.append({
+            "aspectRatio": aspect,
+            "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
+            "videoModelKey": model_key,
+            "seed": random.randint(1, 9999),
+            "metadata": {},
+            "startImage": {"mediaId": start_image_id},
+            "endImage": {"mediaId": end_image_id},
+        })
 
     body = {
         "mediaGenerationContext": build_generation_context(),
         "clientContext": build_client_context(project_id),
-        "requests": [request],
+        "requests": requests,
         "useV2ModelConfig": True,
     }
 

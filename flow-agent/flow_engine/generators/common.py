@@ -7,13 +7,13 @@ import asyncio
 import base64
 import logging
 import os
-import random
 import time
 import uuid
 
 from ..config import (
     CLIENT_CTX, ENDPOINTS, POLL_INTERVAL, POLL_TIMEOUT,
 )
+from flow_server.media_types import sniff_media_type
 
 log = logging.getLogger("flow_engine.generators")
 
@@ -90,9 +90,13 @@ async def download_video(bridge, media_id: str, output_path: str) -> bool:
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     video_bytes = base64.b64decode(video_b64)
+    mime_type = sniff_media_type(video_bytes)
+    if not mime_type.startswith("video/"):
+        log.error("Downloaded media %s is %s, not video", media_id, mime_type)
+        return False
     with open(output_path, "wb") as f:
         f.write(video_bytes)
 
     size_mb = len(video_bytes) / (1024 * 1024)
-    log.info("Saved: %s (%.1f MB)", output_path, size_mb)
+    log.info("Saved: %s (%.1f MB, %s)", output_path, size_mb, mime_type)
     return True

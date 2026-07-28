@@ -140,7 +140,7 @@ def get_mcp_tools_list():
                 "type": "object",
                 "properties": {
                     "url": {"type": "string", "description": "Direct or signed HTTP(S) image/video URL"},
-                    "output_dir": {"type": "string", "description": "Optional local destination directory; defaults to ~/Downloads/Flow-Agent"},
+                    "output_dir": {"type": "string", "description": "Optional local destination directory; defaults to FLOW_OUTPUT_DIR"},
                     "filename": {"type": "string", "description": "Optional output filename"},
                     "upload_to_flow": {"type": "boolean", "default": False, "description": "Upload the downloaded file to Google Flow and return its media ID"},
                     "max_size_mb": {"type": "integer", "minimum": 1, "maximum": 4096, "default": 2048}

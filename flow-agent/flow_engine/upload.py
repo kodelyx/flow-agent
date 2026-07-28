@@ -13,15 +13,21 @@ import uuid
 
 from .bridge import ExtensionBridge
 from .config import DEFAULT_PROJECT
-from . import media_store
+from flow_server.media_history import get_revalidated_upload_id, record_uploaded_media
+from flow_server.media_types import sniff_media_type
 
 log = logging.getLogger("flow_engine.upload")
 
 DEFAULT_PROJECT_ID = DEFAULT_PROJECT
 
 
-async def upload_video(video_path: str, project_id: str = DEFAULT_PROJECT_ID,
-                       bridge: ExtensionBridge = None) -> dict:
+async def upload_video(
+    video_path: str,
+    project_id: str = DEFAULT_PROJECT_ID,
+    bridge: ExtensionBridge = None,
+    *,
+    force_upload: bool = False,
+) -> dict:
     """Upload a video file to Google Flow.
 
     If bridge is provided, uses it (caller manages lifecycle).
@@ -30,10 +36,15 @@ async def upload_video(video_path: str, project_id: str = DEFAULT_PROJECT_ID,
     Returns dict with mediaId, media, workflow on success.
     """
     video_path = os.path.abspath(video_path)
-    if not os.path.exists(video_path):
+    if not os.path.isfile(video_path):
         raise FileNotFoundError(f"Video not found: {video_path}")
 
     video_size = os.path.getsize(video_path)
+    mime_type = sniff_media_type(video_path)
+    if not mime_type.startswith("video/"):
+        raise ValueError(
+            f"Expected a video file, but {os.path.basename(video_path)} contains {mime_type}."
+        )
     log.info("Video: %s (%d bytes, %.1fMB)",
              os.path.basename(video_path), video_size, video_size / 1024 / 1024)
 
@@ -43,8 +54,23 @@ async def upload_video(video_path: str, project_id: str = DEFAULT_PROJECT_ID,
         bridge = ExtensionBridge()
         await bridge.start()
         if not await bridge.wait_for_extension(timeout=30):
+            await bridge.close()
             raise ConnectionError("Extension did not connect")
         await asyncio.sleep(2)
+
+    if not force_upload:
+        try:
+            cached_media_id = await get_revalidated_upload_id(
+                video_path, bridge, project_id=project_id
+            )
+        except Exception:
+            if own_bridge:
+                await bridge.close()
+            raise
+        if cached_media_id:
+            if own_bridge:
+                await bridge.close()
+            return {"mediaId": cached_media_id, "cached": True}
 
     # Step 1: Get session URL via extension's trpc_request
     token = bridge._flow_key
@@ -60,7 +86,7 @@ async def upload_video(video_path: str, project_id: str = DEFAULT_PROJECT_ID,
             "method": "POST",
             "headers": {
                 "X-Upload-Project-Id": project_id,
-                "X-Upload-Content-Type": "video/mp4",
+                "X-Upload-Content-Type": mime_type,
                 "X-Upload-Content-Length": str(video_size),
             },
         },
@@ -88,7 +114,7 @@ async def upload_video(video_path: str, project_id: str = DEFAULT_PROJECT_ID,
     log.info("Uploading %d bytes via curl...", video_size)
     proc = await asyncio.create_subprocess_exec(
         "curl", "-X", "PUT", session_url,
-        "-H", "Content-Type: video/mp4",
+        "-H", f"Content-Type: {mime_type}",
         "-H", f"Authorization: Bearer {auth_token}",
         "-H", "X-Goog-Upload-Command: upload, finalize",
         "-H", "X-Goog-Upload-Offset: 0",
@@ -113,7 +139,12 @@ async def upload_video(video_path: str, project_id: str = DEFAULT_PROJECT_ID,
 
     if media_id:
         log.info("SUCCESS! media_id = %s", media_id)
-        media_store.save(os.path.basename(video_path), media_id)
+        record_uploaded_media(
+            video_path,
+            media_id,
+            project_id=project_id,
+            mime_type=mime_type,
+        )
     else:
         log.warning("Upload succeeded but no media_id found")
         log.info("Response: %s", json.dumps(data, indent=2)[:1000])

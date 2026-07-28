@@ -4,6 +4,7 @@ All constants hardcoded. No external config files needed.
 """
 
 import os
+import shutil
 import sys
 
 # ─── Paths ───────────────────────────────────────────────────
@@ -12,7 +13,6 @@ if getattr(sys, 'frozen', False):
     ROOT_DIR = os.path.dirname(sys.executable)
 else:
     ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MEDIA_ID_FILE = os.path.join(ROOT_DIR, "media-id.js")
 
 # Load user settings from .env. Legacy config.env remains supported so older
 # installations continue to work after upgrading.
@@ -32,6 +32,42 @@ def _load_env_file(path):
 
 _load_env_file(os.path.join(ROOT_DIR, ".env"))
 _load_env_file(os.path.join(ROOT_DIR, "config.env"))
+
+
+def _flow_binary_dir() -> str:
+    """Locate the directory containing the user-facing ``flow`` executable."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+
+    argv0 = sys.argv[0] if sys.argv else ""
+    executable_name = os.path.splitext(os.path.basename(argv0))[0].lower()
+    if executable_name == "flow":
+        resolved = shutil.which(argv0) if not os.path.dirname(argv0) else argv0
+        if resolved:
+            return os.path.dirname(os.path.abspath(resolved))
+    # Source/module execution: main.py is the development equivalent of the
+    # installed binary, so outputs remain beside the checkout instead of cwd.
+    return ROOT_DIR
+
+
+BINARY_DIR = _flow_binary_dir()
+_output_override = os.environ.get("FLOW_OUTPUT_DIR") or os.environ.get("OUTPUT_DIR")
+OUTPUT_DIR = os.path.abspath(os.path.expanduser(
+    _output_override or os.path.join(BINARY_DIR, "output")
+))
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Generated history and uploaded media-ID cache share one durable registry.
+# ``MEDIA_ID_FILE`` remains an alias for compatibility; it can never point at
+# a separate media-ids.json file.
+HISTORY_FILE = os.path.abspath(os.path.expanduser(
+    os.environ.get("FLOW_HISTORY_FILE", os.path.join(OUTPUT_DIR, "history.json"))
+))
+MEDIA_ID_FILE = HISTORY_FILE
+# This path is read-only and used solely for one-time migration.  New code
+# never creates or appends to media-id.js.
+LEGACY_MEDIA_ID_FILE = os.path.join(ROOT_DIR, "media-id.js")
+LEGACY_MEDIA_STORE_FILE = os.path.join(OUTPUT_DIR, "media-ids.json")
 
 # ─── Project ─────────────────────────────────────────────────
 

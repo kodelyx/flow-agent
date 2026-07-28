@@ -7,7 +7,7 @@
 #    1. Install the unified `flow` CLI
 #    2. Make the backend auto-start on login (LaunchAgent)
 #  MCP is NOT auto-registered — you add it to your own AI client
-#  (Claude Desktop / Cursor / Cline / Antigravity...). See MCP.md.
+#  (Claude Desktop / Cursor / Cline / Antigravity...). See README.md.
 #  Re-running is safe (idempotent).
 # ============================================================
 set -euo pipefail
@@ -130,9 +130,9 @@ What happens now:
 ${BOLD}Next: connect your AI client to the MCP server.${NC}
   The backend does NOT auto-add itself to any client — you paste one
   small config into whatever you use (Claude Desktop / Cursor / Cline /
-  Antigravity / etc). Full copy-paste snippets for each are in:
+  Antigravity / etc). Client setup instructions are in:
 
-      ${BOLD}../MCP.md${NC}
+      ${BOLD}${PROJECT_DIR}/../README.md${NC}
 
   Point your client at the unified Flow command:
       command: ${FLOW_BIN}

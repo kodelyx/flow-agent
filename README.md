@@ -1,35 +1,64 @@
-# ⚡ Flow Agent
+# Flow Agent
 
-CLI, OpenAI-compatible API, Chrome extension, and MCP server for Google Flow image/video generation.
+CLI, OpenAI-compatible API, Chrome extension bridge, and MCP server for Google
+Flow image and video generation.
 
 [![Release](https://img.shields.io/github/v/release/kodelyx/flow-agent)](https://github.com/kodelyx/flow-agent/releases)
 [![Build](https://github.com/kodelyx/flow-agent/actions/workflows/build.yml/badge.svg)](https://github.com/kodelyx/flow-agent/actions/workflows/build.yml)
 
+Flow Agent uses your existing, logged-in Google Flow browser session. The CLI,
+HTTP API, and MCP clients all share one backend and one extension bridge.
+
 ## Features
 
-- Text-to-image and reference-based image generation
-- Text-to-video, image-to-video, reference-to-video, and video editing
-- 4/6/8/10-second video generation
-- OpenAI-compatible HTTP API
-- CLI for full control
-- MCP v2 with status, credits, models, history, generation, upload, URL download, and video editing
-- Chrome extension bridge using your logged-in Google Flow session
-- `gem_pix_2` (Pro) as the default image model
+- Text-to-image and reference-image generation
+- Text-to-video, image-to-video, first/last-frame, reference-to-video, and video editing
+- 4, 6, 8, and 10-second video generation
+- Reusable generated and uploaded media IDs, including after backend restarts
+- Exact `--output` paths with real PNG, JPEG, and WebP conversion
+- Signature-based MIME and extension detection
+- Persistent idempotency for safe paid-generation retries
+- OpenAI-compatible HTTP endpoints and pollable video jobs
+- MCP v2 tools for generation, upload, download, history, status, and credits
+- One shared backend on port `8001`; an already healthy backend is reused
 
-## Install from source
+## Requirements
 
-Requirements: Python 3.10+, Chrome, Google Flow access, and the `uv` package manager.
+- Python 3.10 or newer
+- [uv](https://docs.astral.sh/uv/) for source installation
+- Chrome or another Chromium browser
+- Google Flow access and an active signed-in session
+
+## Quick start
+
+Clone the repository and enter the Python application directory:
 
 ```bash
 git clone https://github.com/kodelyx/flow-agent.git
 cd flow-agent/flow-agent
+```
+
+### macOS or Linux setup
+
+The setup script installs the `flow` command and configures the backend to start
+on login:
+
+```bash
+./scripts/setup.sh
+```
+
+To install only the CLI without creating a background service:
+
+```bash
 uv tool install --force .
 ```
 
-Start the backend:
+### Windows setup
 
-```bash
-flow
+From PowerShell in `flow-agent\flow-agent`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-windows.ps1
 ```
 
 ## Chrome extension
@@ -37,32 +66,126 @@ flow
 1. Open `chrome://extensions`.
 2. Enable **Developer mode**.
 3. Click **Load unpacked**.
-4. Select the [`flow-extension`](flow-extension) folder.
-5. Open <https://labs.google/fx/tools/flow>, sign in, and keep the page open.
-6. Verify with `flow status`.
+4. Select the repository's [`flow-extension`](flow-extension) directory.
+5. Open [Google Flow](https://labs.google/fx/tools/flow), sign in, and keep the tab open.
+6. Run `flow status` and confirm both readiness fields are `True`.
 
-Extension-specific instructions: [flow-extension/README.md](flow-extension/README.md).
+Extension-specific details are in
+[`flow-extension/README.md`](flow-extension/README.md).
 
-## CLI
+## Backend and readiness
+
+Start the backend manually when it is not managed by the setup service:
+
+```bash
+flow
+```
+
+Running `flow` again while a healthy Flow backend is already listening on port
+`8001` reuses that backend instead of starting a second bridge.
+
+Check readiness with:
 
 ```bash
 flow status
-flow credits
+```
 
+Generation begins only after both of these values are true:
+
+```text
+extension_connected: True
+has_flow_key:        True
+```
+
+## CLI
+
+Run `flow <command> --help` for every available option.
+
+### Images
+
+```bash
 flow image "a cinematic neon city" --model gem_pix_2 --aspect landscape
 flow image "restyle this character" --ref character.png --count 2
+flow image "a product photo" --output /absolute/path/result.png
+flow image "a product photo" --output /absolute/path/result.jpg
+flow image "a product photo" --output /absolute/path/result.webp
+```
 
+For `.png`, `.jpg`, `.jpeg`, and `.webp` outputs, the suffix is a format
+contract. If Google Flow returns another image format, Flow Agent decodes and
+atomically converts it while preserving dimensions. It never writes JPEG bytes
+under a `.png` filename.
+
+### Videos
+
+```bash
 flow video "a dragon flying over mountains" --aspect landscape --duration 8
 flow video "the character starts walking" --start character.png
 flow video "transition between scenes" --start first.png --end last.png
-
-flow upload clip.mp4
-flow edit "transform into a dark anime style" --media-id MEDIA_ID --video-file clip.mp4
+flow video "keep this character consistent" --ref character.png
 ```
 
-Run `flow <command> --help` for every option.
+`--start`, `--end`, and `--ref` accept either local image paths or exact media
+IDs stored in `history.json`:
 
-## MCP v2
+```bash
+flow video "animate this generated image" --start GENERATED_IMAGE_MEDIA_ID
+flow video "use these existing references" --ref GENERATED_ID UPLOADED_ID
+```
+
+### Upload and edit
+
+```bash
+flow upload character.png
+flow upload clips --batch
+flow edit "transform into a dark anime style" --media-id VIDEO_MEDIA_ID
+```
+
+Uploads return a reusable `media_id`. Generated media IDs are printed after the
+saved output path.
+
+### Safe retries
+
+Use one idempotency key when retrying the same paid request:
+
+```bash
+flow image "a lighthouse at sunset" --idempotency-key lighthouse-v1
+flow video "waves moving slowly" --idempotency-key waves-v1
+```
+
+The same key and payload reuse the original result or job. Reusing a key with a
+different payload returns a conflict instead of starting another generation.
+
+## Output files and media history
+
+Without `--output`, files are saved in an `output` directory beside the
+installed `flow` executable. Override this location before starting the backend:
+
+```bash
+export FLOW_OUTPUT_DIR="$HOME/FlowOutput"
+```
+
+An explicit path is resolved to an absolute path and used exactly. Multiple
+results keep the first requested path and add `_2`, `_3`, and so on for later
+files. The CLI prints the final absolute path and detected format.
+
+`history.json` in the configured output directory is the only persistent media
+registry. It stores filename, media ID, media type, MIME type, prompt,
+timestamp, project ID, and local/served location metadata when available.
+
+- Generated and uploaded IDs remain reusable after backend restarts.
+- Exact media IDs are matched before filename lookup.
+- A stale remote ID is re-uploaded only after Google Flow confirms it is unavailable.
+- The refreshed ID is written back atomically to the same history record.
+- An older `media-id.js` or `media-ids.json` registry is migrated once and removed.
+- Missing history and local assets return a clear `Media not found` error.
+
+Flow Agent does not create a second media registry.
+
+## MCP setup
+
+Copy this portable configuration into your MCP client. It intentionally uses
+the `flow` command from `PATH` instead of a machine-specific executable path:
 
 ```json
 {
@@ -75,21 +198,71 @@ Run `flow <command> --help` for every option.
 }
 ```
 
-Available tools:
+The backend must be running before MCP tools can generate media. `flow mcp` is
+the stdio MCP transport; it does not create a second backend bridge.
 
-- `get_flow_status`
-- `get_flow_credits`
-- `list_flow_models`
-- `get_flow_history`
-- `generate_flow_image`
-- `generate_flow_video`
-- `upload_flow_media`
-- `download_media_from_url`
-- `edit_flow_video`
+If a desktop client cannot find `flow`, locate the installation with:
 
-`download_media_from_url` accepts direct or signed image/video links, saves them locally, and can optionally upload them to Flow.
+```bash
+command -v flow
+```
 
-More client configurations: [MCP.md](MCP.md).
+Use that result in your local client configuration or add its directory to the
+client's `PATH`. Do not commit machine-specific executable paths to the
+repository.
+
+### Claude Desktop
+
+Create or edit `~/Library/Application Support/Claude/claude_desktop_config.json`
+and add the `flow` entry shown above inside `mcpServers`. Restart Claude Desktop
+after saving.
+
+### Cursor
+
+Open **Settings → MCP → Add new MCP server**, or add the same configuration to
+`~/.cursor/mcp.json`.
+
+### Cline
+
+Open **Cline → MCP Servers → Configure MCP Servers** and add the same `flow`
+server configuration.
+
+### Windsurf
+
+Add the same configuration to `~/.codeium/windsurf/mcp_config.json`.
+
+### Google Antigravity
+
+Open Antigravity's MCP settings and add a stdio server with command `flow` and
+arguments `mcp`.
+
+### Claude Code
+
+```bash
+claude mcp add flow -- flow mcp
+```
+
+### SSE/HTTP-only MCP clients
+
+Use the backend's SSE endpoint:
+
+```text
+http://127.0.0.1:8001/sse
+```
+
+JSON-RPC messages are sent to `http://127.0.0.1:8001/messages`.
+
+### MCP tools
+
+- `get_flow_status` — backend, extension, and Flow-key readiness
+- `get_flow_credits` — credits across connected browser sessions
+- `list_flow_models` — available models and the active default
+- `get_flow_history` — generated and uploaded media history
+- `generate_flow_image` — text/reference image generation
+- `generate_flow_video` — text, start-image, and reference video generation
+- `upload_flow_media` — upload a local path, URL, or base64 media payload
+- `download_media_from_url` — download media and optionally upload it to Flow
+- `edit_flow_video` — edit a video by media ID or local video path
 
 ## HTTP API
 
@@ -97,44 +270,119 @@ Default base URL: `http://127.0.0.1:8001`
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /health` | Backend and extension health |
-| `GET /v1/models` | Available models |
+| `GET /health` | Backend, extension, and Flow-key health |
+| `GET /v1/models` | Available image/video models |
 | `GET /v1/credits` | Connected-account credits |
-| `GET /v1/history` | Generated media history |
+| `GET /v1/history` | Persistent generated/uploaded media history |
 | `POST /v1/images/generations` | Generate images |
-| `POST /v1/videos/generations` | Generate videos |
-| `POST /v1/upload` | Upload image/video references |
-| `GET /sse` | MCP over SSE connection |
+| `POST /v1/videos/generations` | Submit video generation |
+| `GET /v1/videos/generations/{job_id}` | Poll a video job |
+| `POST /v1/upload` | Upload an image or video reference |
+| `GET /download/{filename}` | Download a managed media file |
+| `GET /sse` | MCP over SSE |
 | `POST /messages` | MCP over SSE JSON-RPC messages |
 
-## Default model
+Send an `Idempotency-Key` header when an HTTP generation request may be
+retried. Video submission returns a structured result containing a `job_id`,
+status, creation timestamp, and media data. Poll the job endpoint until it is
+`succeeded` or `failed`.
 
-```env
-IMAGE_MODEL=gem_pix_2
+If `SERVER_API_KEY` is configured, send it as:
+
+```text
+Authorization: Bearer YOUR_SERVER_API_KEY
 ```
 
-Available aliases:
+## Configuration
+
+Environment variables take precedence over values in `.env`.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OPENAI_API_HOST` | `127.0.0.1` | Backend bind/client host |
+| `OPENAI_API_PORT` | `8001` | Backend HTTP port |
+| `FLOW_OUTPUT_DIR` | beside `flow` | Generated files and `history.json` |
+| `FLOW_HISTORY_FILE` | `<output>/history.json` | Optional history path override |
+| `DEFAULT_PROJECT` | bundled default | Google Flow project ID |
+| `IMAGE_MODEL` | `gem_pix_2` | Default image model |
+| `PUBLIC_BASE_URL` | `http://localhost:8001` | URLs returned for local media |
+| `SERVER_API_KEY` | unset | Optional backend bearer authentication |
+| `FLOW_READY_TIMEOUT` | `30` | CLI readiness wait in seconds |
+| `FLOW_VIDEO_POLL_TIMEOUT` | `900` | CLI video-job polling timeout |
+| `MAX_CONCURRENT_REQUESTS` | `5` | Maximum concurrent Flow requests |
+| `REQUEST_MIN_INTERVAL` | `3` | Minimum seconds between request starts |
+
+Image model aliases:
 
 - `harbor_seal` / `lite`
 - `narwhal` / `standard`
 - `gem_pix_2` / `pro`
 
+## Exit codes
+
+The unified CLI uses stable non-zero codes for actionable failures:
+
+| Code | Meaning |
+|---|---|
+| `2` | Invalid CLI arguments |
+| `3` | Backend unavailable |
+| `4` | Extension or Flow key not ready |
+| `5` | Backend/API generation error |
+| `6` | Media conversion, download, or output-writing error |
+
+## Development
+
+Install dependencies and run the regression suite:
+
+```bash
+cd flow-agent/flow-agent
+uv sync --extra test
+uv run pytest -q
+uvx ruff check . --select F,E9
+```
+
+Build a standalone executable with the same Python environment used by the
+project:
+
+```bash
+uv run --with pyinstaller python -m PyInstaller --clean --noconfirm flow.spec
+```
+
+The generated binary is written to `dist/flow` (`dist/flow.exe` on Windows).
+`build/` and `dist/` are ignored build artifacts and should not be committed.
+
+## Troubleshooting
+
+- **`flow` is not found** — reinstall from `flow-agent/flow-agent` with
+  `uv tool install --force .`, then ensure the directory printed by
+  `command -v flow` is available to your shell or MCP client.
+- **Backend reports `extension_connected=False`** — open Google Flow in Chrome,
+  enable the extension, and refresh the Flow tab.
+- **Backend reports `has_flow_key=False`** — keep the signed-in Flow tab open
+  and trigger a refresh so the extension can capture the current key.
+- **Port 8001 is already in use** — `flow` reuses a healthy Flow backend. Stop
+  or reconfigure an unrelated service occupying that port.
+- **`Media not found`** — regenerate or upload the asset if neither its history
+  record nor local managed file still exists.
+- **A retry might have reached Flow** — repeat it with the same idempotency key;
+  do not create a new key for the same paid request.
+- **MCP tools appear but fail** — verify `flow status`, then restart the MCP
+  client after correcting its command/PATH configuration.
+
 ## Project layout
 
 ```text
 flow-agent/
-├── flow-agent/          # CLI, API, MCP and Flow generation backend
-│   ├── main.py          # Unified `flow` entry point
-│   ├── flow.spec        # Single-executable PyInstaller build
-│   ├── runtime.txt      # Runtime dependency list
-│   ├── flow_server/     # API, MCP/SSE, routes and server state
-│   ├── flow_engine/     # Flow generation, bridge and upload engine
-│   ├── scripts/         # Setup and uninstall scripts
-│   └── .env             # User-changeable settings only
-├── flow-extension/      # Chrome extension bridge
-├── .github/workflows/   # Cross-platform release builds
-├── MCP.md               # MCP client setup
-└── README.md
+├── README.md             # All installation, CLI, API, and MCP documentation
+├── flow-agent/           # Python CLI, backend, and MCP implementation
+│   ├── main.py           # Unified `flow` entry point
+│   ├── flow.spec         # Single-executable PyInstaller build
+│   ├── flow_server/      # API, MCP/SSE, media registry, and server state
+│   ├── flow_engine/      # Flow bridge, generators, polling, and uploads
+│   ├── scripts/          # Setup and uninstall scripts
+│   └── tests/            # Regression and acceptance tests
+├── flow-extension/       # Chrome extension bridge
+└── .github/workflows/    # Cross-platform test/build workflow
 ```
 
 ## License

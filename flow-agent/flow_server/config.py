@@ -2,15 +2,17 @@
 """Shared constants and pure helpers for the Flow Agent API server."""
 
 import os
-import mimetypes
 from typing import Optional
+
+from flow_engine.config import OUTPUT_DIR
+from flow_server.media_types import extension_for_mime, sniff_media_type
 
 # Directories
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(os.getcwd(), "output"))
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-INPUT_DIR = os.environ.get("INPUT_DIR", os.path.join(os.getcwd(), "input"))
-os.makedirs(INPUT_DIR, exist_ok=True)
+# Backward-compatible name only: inputs and outputs now share one managed
+# directory, so the backend never creates an ``input/`` folder beside itself.
+INPUT_DIR = OUTPUT_DIR
 
 PUBLIC_BASE_URL = os.environ.get(
     "PUBLIC_BASE_URL", "http://localhost:8001"
@@ -22,7 +24,8 @@ def public_url(filename: str) -> str:
 
 
 def _content_type(filename: str) -> str:
-    return "video/mp4" if filename.endswith(".mp4") else "image/png"
+    path = filename if os.path.isabs(filename) else os.path.join(OUTPUT_DIR, filename)
+    return sniff_media_type(path, filename=filename)
 
 
 # Map OpenAI image size to Flow aspect ratio
@@ -50,7 +53,7 @@ def map_size_to_aspect(size_str: Optional[str]) -> str:
     return "square"
 
 
-MCP_SERVER_VERSION = "2.0.0"
+MCP_SERVER_VERSION = "2.0.3"
 
 DEFAULT_IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "gem_pix_2").lower()
 _MODEL_ALIASES = {
@@ -76,4 +79,4 @@ def _safe_filename(name):
 
 
 def _extension_for_mime(mime):
-    return mimetypes.guess_extension(mime) or (".mp4" if "video" in mime else ".png")
+    return extension_for_mime(mime)

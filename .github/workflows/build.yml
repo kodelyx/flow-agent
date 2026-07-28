@@ -30,7 +30,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
-          pip install -e .
+          pip install -e '.[test]'
+
+      - name: Run regression tests
+        working-directory: flow-agent
+        run: pytest -q
 
       - name: Build Flow
         working-directory: flow-agent
