@@ -13,7 +13,7 @@ Chrome bridge for [kodelyx/flow-agent](https://github.com/kodelyx/flow-agent). I
 
 ## Install
 
-1. Start the backend with `flow serve`.
+1. Start the backend with `flow`.
 2. Open `chrome://extensions` and enable **Developer mode**.
 3. Click **Load unpacked** and select this `flow-extension` folder.
 4. Open <https://labs.google/fx/tools/flow>, sign in, and keep the tab open.

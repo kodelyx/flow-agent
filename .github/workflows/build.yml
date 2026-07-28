@@ -1,6 +1,7 @@
 name: Build Executables
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     tags: ['v*']
@@ -31,25 +32,21 @@ jobs:
           pip install pyinstaller
           pip install -e .
 
-      - name: Build CLI and MCP
+      - name: Build Flow
         working-directory: flow-agent
         run: |
-          pyinstaller --clean --noconfirm specs/flow-cli.spec
-          pyinstaller --clean --noconfirm specs/flow-mcp.spec
+          pyinstaller --clean --noconfirm flow.spec
 
       - name: Rename binaries
         working-directory: flow-agent/dist
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
-            mv flow-cli.exe flow-cli-windows.exe
-            mv flow-mcp.exe flow-mcp-windows.exe
+            mv flow.exe flow-windows.exe
           elif [ "$RUNNER_OS" = "macOS" ]; then
-            mv flow-cli flow-cli-macos
-            mv flow-mcp flow-mcp-macos
+            mv flow flow-macos
           else
-            mv flow-cli flow-cli-linux
-            mv flow-mcp flow-mcp-linux
+            mv flow flow-linux
           fi
 
       - uses: actions/upload-artifact@v4
