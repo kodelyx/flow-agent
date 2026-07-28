@@ -2,7 +2,6 @@
 
 import logging
 import random
-import uuid
 
 from ..config import ENDPOINTS
 from .common import build_client_context, build_generation_context

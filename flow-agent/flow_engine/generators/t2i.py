@@ -5,12 +5,12 @@ Ported from virtual-try/go-server/image.go
 
 import logging
 import os
-import random
 import re
 import time
 
-from ..config import ENDPOINTS, DEFAULT_PROJECT, DEFAULT_IMAGE_MODEL, IMAGE_MODELS
+from ..config import DEFAULT_IMAGE_MODEL, IMAGE_MODELS
 from .common import build_client_context, build_generation_context
+from flow_server.media_types import sniff_media_type
 
 log = logging.getLogger("flow_engine.generators.t2i")
 
@@ -185,12 +185,20 @@ async def download_image(bridge, image_url: str, output_path: str) -> bool:
     for attempt in range(1, 4):
         try:
             req = urllib.request.Request(image_url, headers={"User-Agent": "Mozilla/5.0"})
-            with opener.open(req, timeout=60) as resp, open(output_path, "wb") as f:
-                f.write(resp.read())
+            with opener.open(req, timeout=60) as resp:
+                image_bytes = resp.read()
+                declared_mime = resp.headers.get("Content-Type", "")
+            mime_type = sniff_media_type(
+                image_bytes, declared_mime=declared_mime, filename=image_url
+            )
+            if not mime_type.startswith("image/"):
+                raise ValueError(f"downloaded response is {mime_type}, not an image")
+            with open(output_path, "wb") as f:
+                f.write(image_bytes)
             size_kb = os.path.getsize(output_path) / 1024
             if size_kb <= 0:
                 raise ValueError("empty download")
-            log.info("Saved: %s (%.0f KB)", output_path, size_kb)
+            log.info("Saved: %s (%.0f KB, %s)", output_path, size_kb, mime_type)
             return True
         except Exception as e:
             last_err = e

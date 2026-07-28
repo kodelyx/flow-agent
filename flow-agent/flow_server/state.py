@@ -10,7 +10,6 @@ import os
 import sys
 import uuid
 import time
-import json
 import logging
 import asyncio
 from typing import Optional
@@ -23,10 +22,11 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from flow_engine import ExtensionBridge
-from flow_engine.bridge import target_client_id_var
 from flow_engine.generators.t2i import download_image, _parse_image_results
 
-from flow_server.config import OUTPUT_DIR, INPUT_DIR, public_url
+from flow_server.config import OUTPUT_DIR, public_url
+from flow_server.history import upsert_history
+from flow_server.media_types import ensure_correct_extension
 
 # Setup logging (format configured centrally in flow_engine/__init__.py, imported above)
 log = logging.getLogger("flow_engine.openai_api")
@@ -65,8 +65,18 @@ async def recover_orphan_response(data: dict, meta: dict):
             out_path = os.path.join(OUTPUT_DIR, filename)
             if not await download_image(get_bridge(), r["image_url"], out_path):
                 continue
+            out_path = ensure_correct_extension(out_path)
+            filename = os.path.basename(out_path)
             served_url, r2_key = await publish(filename, out_path)
-            await append_to_history("image", served_url, prompt, r.get("media_id"), r2_key)
+            await append_to_history(
+                "image",
+                served_url,
+                prompt,
+                r.get("media_id"),
+                r2_key,
+                local_path=out_path,
+                project_id=meta.get("project_id"),
+            )
             recovered += 1
         if recovered:
             log.info("Recovered %d orphaned image(s) from late response %s", recovered, data.get("id"))
@@ -136,58 +146,48 @@ async def get_active_bridge() -> ExtensionBridge:
 
 
 # History Management Helper
-async def append_to_history(type_str: str, url: str, prompt: str, media_id: str = None, r2_key: str = None):
-    """Record a generation. Uses history.json."""
-    _append_history_file(type_str, url, prompt, media_id)
-    _append_input_file(type_str, prompt, media_id)
+async def append_to_history(
+    type_str: str,
+    url: str,
+    prompt: str,
+    media_id: str = None,
+    r2_key: str = None,
+    *,
+    local_path: str = None,
+    project_id: str = None,
+    mime_type: str = None,
+):
+    """Record generation metadata in the single durable history registry."""
+    if not project_id:
+        from flow_engine.config import DEFAULT_PROJECT
 
+        project_id = os.environ.get("DEFAULT_PROJECT", DEFAULT_PROJECT)
 
-def _append_input_file(type_str: str, prompt: str, media_id: str = None):
-    """Save the request input alongside its media_id in input/input.json."""
-    input_file = os.path.join(INPUT_DIR, "input.json")
-    client_id = target_client_id_var.get()
-    data = {"inputs": []}
-    if os.path.exists(input_file):
-        try:
-            with open(input_file, "r") as f:
-                data = json.load(f)
-        except Exception:
-            pass
-    data["inputs"].insert(0, {
-        "type": type_str,
-        "prompt": prompt,
-        "media_id": media_id,
-        "client_id": client_id,
-        "timestamp": int(time.time()),
-    })
-    data["inputs"] = data["inputs"][:100]
-    try:
-        with open(input_file, "w") as f:
-            json.dump(data, f, indent=2)
-    except Exception:
-        pass
+    if local_path and os.path.isfile(local_path):
+        from flow_server.media_history import record_local_media
 
+        saved = record_local_media(
+            local_path,
+            media_id=media_id,
+            project_id=project_id,
+            mime_type=mime_type,
+            prompt=prompt,
+            source="generated" if prompt != "Uploaded reference file" else "upload",
+            url=url,
+        )
+        if r2_key:
+            saved["r2_key"] = r2_key
+            saved = upsert_history(saved)
+        return saved
 
-def _append_history_file(type_str: str, url: str, prompt: str, media_id: str = None):
-    history_file = os.path.join(OUTPUT_DIR, "history.json")
-    data = {"history": []}
-    if os.path.exists(history_file):
-        try:
-            with open(history_file, "r") as f:
-                data = json.load(f)
-        except Exception:
-            pass
-    data["history"].insert(0, {
+    record = {
         "type": type_str,
         "url": url,
         "prompt": prompt,
         "timestamp": int(time.time()),
-        "media_id": media_id
-    })
-    # Cap history at 100 entries to avoid massive files
-    data["history"] = data["history"][:100]
-    try:
-        with open(history_file, "w") as f:
-            json.dump(data, f, indent=2)
-    except Exception:
-        pass
+        "media_id": media_id,
+        "project_id": project_id,
+    }
+    if r2_key:
+        record["r2_key"] = r2_key
+    return upsert_history(record)

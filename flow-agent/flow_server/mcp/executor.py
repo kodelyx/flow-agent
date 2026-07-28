@@ -18,6 +18,7 @@ import tempfile
 from fastapi import HTTPException
 
 from flow_server.config import OUTPUT_DIR, _normalise_model
+from flow_server.media_types import extension_for_media, sniff_media_type
 from flow_server.models import ImageGenerationRequest, VideoGenerationRequest
 from flow_server.mcp.helpers import _mcp_error, _mcp_upload_local_file, _mcp_download_url
 from flow_server.routes.system import health, list_models, get_flow_credits
@@ -198,11 +199,17 @@ async def execute_mcp_tool(request_id, tool_name, arguments):
                     upload_path = file_path
                 elif image_base64:
                     payload = image_base64.split(",", 1)[1] if "," in image_base64 else image_base64
-                    ext = ".mp4" if image_base64.startswith("data:video/") else ".png"
+                    media_bytes = base64.b64decode("".join(payload.split()), validate=True)
+                    mime_type = sniff_media_type(media_bytes)
+                    if not mime_type.startswith(("image/", "video/")):
+                        raise ValueError(
+                            f"Unsupported base64 media signature ({mime_type}); provide an image or video."
+                        )
+                    ext = extension_for_media(media_bytes)
                     temp_path = os.path.join(
                         OUTPUT_DIR, f"mcp_upload_{int(time.time())}_{uuid.uuid4().hex[:6]}{ext}")
                     with open(temp_path, "wb") as f:
-                        f.write(base64.b64decode(payload))
+                        f.write(media_bytes)
                     upload_path = temp_path
                 else:
                     # Scratch dir, never OUTPUT_DIR: the URL's basename can
@@ -261,10 +268,14 @@ async def execute_mcp_tool(request_id, tool_name, arguments):
 
     content = [{"type": "text", "text": text}]
     for b64 in images_b64:
+        try:
+            image_mime = sniff_media_type(base64.b64decode(b64))
+        except Exception:
+            image_mime = "application/octet-stream"
         content.append({
             "type": "image",
             "data": b64,
-            "mimeType": "image/png"
+            "mimeType": image_mime
         })
 
     return {

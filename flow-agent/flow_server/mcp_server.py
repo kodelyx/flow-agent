@@ -5,10 +5,13 @@ import base64
 import os
 import urllib.request
 import urllib.error
-import mimetypes
 import tempfile
 import shutil
 from urllib.parse import urlparse, unquote
+
+from flow_server.media_types import extension_for_media, extension_for_mime, sniff_media_type
+from flow_server.media_history import record_local_media
+from flow_engine.config import OUTPUT_DIR
 
 # Load .env so MCP sees the same user settings as the backend. Legacy
 # config.env remains supported for existing installations.
@@ -69,7 +72,7 @@ def _request_json(path, payload=None, method=None, timeout=30):
 def _file_data_uri(path):
     if not path or not os.path.isfile(path):
         raise ValueError(f"File does not exist: {path}")
-    mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    mime = sniff_media_type(path)
     with open(path, "rb") as f:
         encoded = base64.b64encode(f.read()).decode("utf-8")
     return f"data:{mime};base64,{encoded}"
@@ -80,12 +83,7 @@ def _safe_filename(name):
     return cleaned[:180] or "downloaded_media"
 
 def _extension_for_mime(mime):
-    preferred = {
-        "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
-        "image/gif": ".gif", "video/mp4": ".mp4", "video/webm": ".webm",
-        "video/quicktime": ".mov", "video/x-matroska": ".mkv",
-    }
-    return preferred.get((mime or "").split(";", 1)[0].lower(), "")
+    return extension_for_mime(mime)
 
 def ensure_backend_running():
     try:
@@ -162,7 +160,7 @@ def handle_initialize(request_id, params=None):
             },
             "serverInfo": {
                 "name": "flow",
-                "version": "2.0.0"
+                "version": "2.0.3"
             }
         }
     }
@@ -297,7 +295,7 @@ def handle_tools_list(request_id):
                 "type": "object",
                 "properties": {
                     "url": {"type": "string", "description": "Direct or signed HTTP(S) image/video URL"},
-                    "output_dir": {"type": "string", "description": "Optional local destination directory; defaults to ~/Downloads/Flow-Agent"},
+                    "output_dir": {"type": "string", "description": "Optional local destination directory; defaults to FLOW_OUTPUT_DIR"},
                     "filename": {"type": "string", "description": "Optional output filename"},
                     "upload_to_flow": {"type": "boolean", "default": False, "description": "Upload the downloaded file to Google Flow and return its media ID"},
                     "max_size_mb": {"type": "integer", "minimum": 1, "maximum": 4096, "default": 2048}
@@ -572,7 +570,7 @@ def call_download_media_from_url(url, output_dir=None, filename=None,
     except (TypeError, ValueError):
         max_bytes = 2048 * 1024 * 1024
 
-    destination = os.path.abspath(os.path.expanduser(output_dir or "~/Downloads/Flow-Agent"))
+    destination = os.path.abspath(os.path.expanduser(output_dir or OUTPUT_DIR))
     os.makedirs(destination, exist_ok=True)
     request = urllib.request.Request(
         str(url).strip(),
@@ -582,18 +580,13 @@ def call_download_media_from_url(url, output_dir=None, filename=None,
     try:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         with opener.open(request, timeout=120) as response:
-            content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
+            declared_type = response.headers.get("Content-Type", "")
             content_length = response.headers.get("Content-Length")
             if content_length and int(content_length) > max_bytes:
                 return {"error": f"Download exceeds max_size_mb ({max_size_mb} MB)."}
 
             url_name = _safe_filename(os.path.basename(parsed.path))
             output_name = _safe_filename(filename or url_name)
-            if output_name == "downloaded_media" and content_type:
-                output_name += _extension_for_mime(content_type)
-            elif "." not in output_name and content_type:
-                output_name += _extension_for_mime(content_type)
-            final_path = os.path.join(destination, output_name)
             fd, temp_path = tempfile.mkstemp(prefix=".flow-download-", dir=destination)
             total = 0
             with os.fdopen(fd, "wb") as out:
@@ -605,14 +598,33 @@ def call_download_media_from_url(url, output_dir=None, filename=None,
                     if total > max_bytes:
                         return {"error": f"Download exceeded max_size_mb ({max_size_mb} MB)."}
                     out.write(chunk)
+            content_type = sniff_media_type(
+                temp_path, declared_mime=declared_type, filename=url_name
+            )
+            actual_extension = extension_for_media(
+                temp_path, declared_mime=declared_type, filename=url_name
+            )
+            if actual_extension:
+                stem, existing_extension = os.path.splitext(output_name)
+                if existing_extension.lower() != actual_extension:
+                    output_name = (stem if existing_extension else output_name) + actual_extension
+            final_path = os.path.join(destination, output_name)
             os.replace(temp_path, final_path)
             temp_path = None
+
+        if content_type.startswith(("image/", "video/")):
+            record_local_media(
+                final_path,
+                mime_type=content_type,
+                prompt=f"Downloaded from {parsed.netloc}",
+                source="download",
+            )
 
         result = {
             "success": True,
             "path": final_path,
             "bytes": total,
-            "content_type": content_type or mimetypes.guess_type(final_path)[0] or "application/octet-stream",
+            "content_type": content_type,
             "source_host": parsed.netloc,
         }
         if upload_to_flow:
@@ -654,10 +666,14 @@ def handle_tool_call(request_id, tool_name, arguments):
         )
         content = [{"type": "text", "text": text}]
         for image_data_b64 in images_b64:
+            try:
+                image_mime = sniff_media_type(base64.b64decode(image_data_b64))
+            except Exception:
+                image_mime = "application/octet-stream"
             content.append({
                 "type": "image",
                 "data": image_data_b64,
-                "mimeType": "image/png"
+                "mimeType": image_mime
             })
     elif tool_name == "generate_flow_video":
         prompt = arguments.get("prompt")

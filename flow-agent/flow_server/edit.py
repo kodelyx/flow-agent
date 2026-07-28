@@ -16,9 +16,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from flow_engine import ExtensionBridge, poll_status, download_video, ASPECTS, DEFAULT_PROJECT
-from flow_engine.generators.v2v import edit_video
 from flow_engine.generators.common import build_client_context, build_generation_context
-from flow_engine.config import ENDPOINTS, CLIENT_CTX, FPS, SEGMENT_DURATION
+from flow_engine.config import ENDPOINTS, FPS, SEGMENT_DURATION
+from flow_engine.config import OUTPUT_DIR
+from flow_server.history import MediaNotFoundError
+from flow_server.media_history import record_local_media, resolve_media_reference
+from flow_server.media_types import ensure_correct_extension
 
 import random
 
@@ -116,6 +119,14 @@ async def edit_segment(bridge, prompt, aspect, project_id, media_id,
 
     if await download_video(bridge, result_media_id, temp_path):
         os.replace(temp_path, out_path)
+        out_path = ensure_correct_extension(out_path)
+        record_local_media(
+            out_path,
+            media_id=result_media_id,
+            project_id=project_id,
+            prompt=prompt,
+            source="edited",
+        )
         # Cleanup empty .temp dir
         try:
             os.rmdir(temp_dir)
@@ -165,6 +176,17 @@ async def run(args):
     await bridge.start()
     if not await bridge.wait_for_extension(timeout=30):
         return
+    try:
+        source_media_id = await resolve_media_reference(
+            args.media_id,
+            bridge,
+            expected_type="video",
+            project_id=args.project_id,
+        )
+    except (MediaNotFoundError, ValueError, RuntimeError) as exc:
+        log.error("Edit media not found: %s", exc)
+        await bridge.close()
+        return
 
     # Process segments (max 5 concurrent)
     semaphore = asyncio.Semaphore(5)
@@ -174,7 +196,7 @@ async def run(args):
         async with semaphore:
             out = await edit_segment(
                 bridge, args.prompt, aspect, args.project_id,
-                args.media_id, start_frame, end_frame, seg_num, args.output
+                source_media_id, start_frame, end_frame, seg_num, args.output
             )
             results[idx] = out
 
@@ -206,6 +228,13 @@ async def run(args):
                 "-i", concat_file, "-c", "copy", merge_path
             ], capture_output=True)
             os.remove(concat_file)
+            if os.path.isfile(merge_path):
+                record_local_media(
+                    merge_path,
+                    project_id=args.project_id,
+                    prompt=args.prompt,
+                    source="edited_merge",
+                )
             log.info("Merged: %s", merge_path)
         except Exception as e:
             log.warning("Merge failed (ffmpeg needed): %s", e)
@@ -217,11 +246,12 @@ def main():
     parser.add_argument("--media-id", "-m", required=True, help="Flow media ID")
     parser.add_argument("--video-file", "-v", help="Local video (for duration/fps)")
     parser.add_argument("--total-seconds", "-t", type=float)
-    parser.add_argument("--output", "-o", default="output", help="Output directory")
+    parser.add_argument("--output", "-o", default=None, help="Output directory")
     parser.add_argument("--aspect", "-a", choices=["portrait", "landscape"], default="portrait")
     parser.add_argument("--merge", action="store_true")
     parser.add_argument("--project-id", "-p", default=DEFAULT_PROJECT)
     args = parser.parse_args()
+    args.output = os.path.abspath(os.path.expanduser(args.output or os.path.join(OUTPUT_DIR, "edit")))
     asyncio.run(run(args))
 
 

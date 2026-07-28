@@ -7,7 +7,6 @@ Upload, generation history management, and serving of generated assets.
 import os
 import uuid
 import time
-import json
 import base64
 import logging
 
@@ -17,6 +16,15 @@ from fastapi.responses import FileResponse
 from flow_engine import DEFAULT_PROJECT
 
 from flow_server.config import OUTPUT_DIR, public_url
+from flow_server.history import (
+    MediaNotFoundError,
+    clear_history,
+    derive_filename,
+    load_history,
+    remove_history,
+    write_history,
+)
+from flow_server.media_types import extension_for_mime, sniff_media_type
 from flow_server.models import UploadRequest
 from flow_server.state import verify_api_key, get_active_bridge, publish, append_to_history
 
@@ -33,21 +41,34 @@ async def upload_file_endpoint(req: UploadRequest):
     project_id = os.environ.get("DEFAULT_PROJECT", DEFAULT_PROJECT)
 
     b64_data = req.image_base64
-    is_video_input = b64_data.startswith("data:video/")
+    declared_mime = ""
+    if b64_data.startswith("data:") and "," in b64_data:
+        metadata, b64_data = b64_data.split(",", 1)
+        declared_mime = metadata[5:].split(";", 1)[0]
+    elif "," in b64_data:
+        b64_data = b64_data.split(",", 1)[1]
 
-    if "," in b64_data:
-        b64_data = b64_data.split(",")[1]
+    try:
+        media_bytes = base64.b64decode("".join(b64_data.split()), validate=True)
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=f"Invalid base64 upload: {error}") from error
+
+    mime_type = sniff_media_type(media_bytes, declared_mime=declared_mime)
+    is_video_input = mime_type.startswith("video/")
+    if not (is_video_input or mime_type.startswith("image/")):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported upload type {mime_type}; provide a valid image or video file.",
+        )
 
     timestamp = int(time.time())
-    if is_video_input:
-        temp_name = f"upload_{timestamp}_{uuid.uuid4().hex[:6]}.mp4"
-    else:
-        temp_name = f"upload_{timestamp}_{uuid.uuid4().hex[:6]}.png"
+    extension = extension_for_mime(mime_type)
+    temp_name = f"upload_{timestamp}_{uuid.uuid4().hex[:6]}{extension}"
     temp_path = os.path.join(OUTPUT_DIR, temp_name)
 
     try:
         with open(temp_path, "wb") as f:
-            f.write(base64.b64decode(b64_data))
+            f.write(media_bytes)
 
         if is_video_input:
             from flow_engine.upload import upload_video
@@ -73,7 +94,16 @@ async def upload_file_endpoint(req: UploadRequest):
                 pass
 
         # Add to history
-        await append_to_history("video" if is_video_input else "image", download_url, "Uploaded reference file", media_id, r2_key)
+        await append_to_history(
+            "video" if is_video_input else "image",
+            download_url,
+            "Uploaded reference file",
+            media_id,
+            r2_key,
+            local_path=temp_path if os.path.isfile(temp_path) else None,
+            project_id=project_id,
+            mime_type=mime_type,
+        )
 
         return {
             "media_id": media_id,
@@ -92,8 +122,8 @@ async def upload_file_endpoint(req: UploadRequest):
 @router.get("/v1/history")
 async def get_history():
     """Get previously generated images and videos."""
-    history_file = os.path.join(OUTPUT_DIR, "history.json")
-    if not os.path.exists(history_file):
+    document = load_history()
+    if not document.get("history"):
         # Auto-detect existing generated files to populate initial history
         history_list = []
         try:
@@ -105,7 +135,7 @@ async def get_history():
             for filename in files[:100]:
                 file_path = os.path.join(OUTPUT_DIR, filename)
                 t = int(os.path.getmtime(file_path))
-                is_vid = filename.endswith(".mp4")
+                is_vid = sniff_media_type(file_path).startswith("video/")
                 download_url = public_url(filename)
                 history_list.append({
                     "type": "video" if is_vid else "image",
@@ -114,34 +144,29 @@ async def get_history():
                     "timestamp": t,
                     "media_id": None
                 })
-            # Save it
-            with open(history_file, "w") as f:
-                json.dump({"history": history_list}, f, indent=2)
-            return {"history": history_list}
+            document["history"] = history_list
+            return write_history(document)
         except Exception:
-            return {"history": []}
-
-    try:
-        with open(history_file, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {"history": []}
+            return document
+    return document
 
 
 @router.delete("/v1/history")
 async def delete_all_history():
     """Clear all generation history and delete files."""
-    history_file = os.path.join(OUTPUT_DIR, "history.json")
     try:
-        if os.path.exists(history_file):
-            os.remove(history_file)
-
+        registered_files = {
+            derive_filename(entry)
+            for entry in load_history().get("history", [])
+            if derive_filename(entry)
+        }
         # Remove all generated and uploaded output files
         for filename in os.listdir(OUTPUT_DIR):
-            if filename.startswith(("openai_img_", "flowagent_img_", "flow_vid_", "openai_chat_vid_", "openai_chat_img_", "upload_", "i2i_upload_", "i2v_upload_")):
+            if filename in registered_files or filename.startswith(("openai_img_", "flowagent_img_", "flow_vid_", "openai_chat_vid_", "openai_chat_img_", "upload_", "input_", "i2i_upload_", "i2v_upload_")):
                 file_path = os.path.join(OUTPUT_DIR, filename)
                 if os.path.exists(file_path):
                     os.remove(file_path)
+        clear_history()
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to clear output folder: {str(e)}")
@@ -150,47 +175,36 @@ async def delete_all_history():
 @router.delete("/v1/history/{filename}")
 async def delete_history_item(filename: str):
     """Delete a single history item and its corresponding file."""
-    history_file = os.path.join(OUTPUT_DIR, "history.json")
+    safe_filename = os.path.basename(filename)
+    try:
+        remove_history(filename=safe_filename)
+    except MediaNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     # Delete from disk
-    file_path = os.path.join(OUTPUT_DIR, filename)
+    file_path = os.path.join(OUTPUT_DIR, safe_filename)
     if os.path.exists(file_path):
         try:
             os.remove(file_path)
         except Exception as e:
             log.error(f"Failed to delete file {file_path}: {e}")
 
-    # Delete from history.json metadata
-    if os.path.exists(history_file):
-        try:
-            with open(history_file, "r") as f:
-                data = json.load(f)
-
-            initial_len = len(data.get("history", []))
-            # Filter out items whose URL contains this filename
-            data["history"] = [
-                item for item in data.get("history", [])
-                if filename not in item["url"]
-            ]
-
-            with open(history_file, "w") as f:
-                json.dump(data, f, indent=2)
-
-            return {"status": "success", "deleted": initial_len - len(data["history"])}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to update history data: {str(e)}")
-
-    return {"status": "success", "info": "metadata file not found"}
+    return {"status": "success", "deleted": 1}
 
 
 @router.get("/download/{filename}")
 async def download_file(filename: str):
     """Serve the generated assets."""
-    file_path = os.path.join(OUTPUT_DIR, filename)
+    safe_filename = os.path.basename(filename)
+    file_path = os.path.join(OUTPUT_DIR, safe_filename)
     if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Media not found in FLOW_OUTPUT_DIR: {safe_filename}. "
+                "Generate or download it again, then retry."
+            ),
+        )
 
-    media_type = "image/png"
-    if filename.endswith(".mp4"):
-        media_type = "video/mp4"
+    media_type = sniff_media_type(file_path, filename=safe_filename)
     return FileResponse(path=file_path, media_type=media_type)

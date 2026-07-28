@@ -15,7 +15,11 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from flow_engine import ExtensionBridge, DEFAULT_PROJECT
+from flow_engine.config import OUTPUT_DIR
 from flow_engine.generators.t2i import generate_image, download_image, IMAGE_ASPECTS
+from flow_server.history import MediaNotFoundError
+from flow_server.media_history import record_local_media, resolve_media_reference
+from flow_server.media_types import ensure_correct_extension
 
 
 async def run(args):
@@ -39,8 +43,19 @@ async def run(args):
                     ref_ids.append(mid)
                     print(f"   media_id={mid[:12]}...")
             else:
-                # Assume it's already a media_id
-                ref_ids.append(ref)
+                try:
+                    ref_ids.append(
+                        await resolve_media_reference(
+                            ref,
+                            bridge,
+                            expected_type="image",
+                            project_id=args.project_id,
+                        )
+                    )
+                except (MediaNotFoundError, ValueError, RuntimeError) as exc:
+                    print(f"Reference media not found: {exc}", file=sys.stderr)
+                    await bridge.close()
+                    return
 
     results = await generate_image(
         bridge, args.prompt, aspect, args.project_id,
@@ -66,6 +81,15 @@ async def run(args):
             out_path = f"{base}_{i+1}{ext}"
 
         if await download_image(bridge, r["image_url"], out_path):
+            if not args.output_explicit:
+                out_path = ensure_correct_extension(out_path)
+            record_local_media(
+                out_path,
+                media_id=r.get("media_id"),
+                project_id=args.project_id,
+                prompt=args.prompt,
+                source="generated",
+            )
             print(f"Done! {out_path}")
 
     await bridge.close()
@@ -74,7 +98,7 @@ async def run(args):
 def main():
     parser = argparse.ArgumentParser(description="Flow Agent — Image Generator")
     parser.add_argument("prompt", help="Text prompt for image")
-    parser.add_argument("--output", "-o", default="output/image.png", help="Output file")
+    parser.add_argument("--output", "-o", default=None, help="Output file")
     parser.add_argument("--aspect", "-a",
                         choices=list(IMAGE_ASPECTS.keys()),
                         default="portrait",
@@ -87,6 +111,8 @@ def main():
     parser.add_argument("--model", "-m", default="gem_pix_2",
                         help="Image model to use (harbor_seal/lite, narwhal/standard, gem_pix_2/pro)")
     args = parser.parse_args()
+    args.output_explicit = args.output is not None
+    args.output = os.path.abspath(os.path.expanduser(args.output or os.path.join(OUTPUT_DIR, "image.png")))
     asyncio.run(run(args))
 
 

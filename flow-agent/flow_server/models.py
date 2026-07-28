@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pydantic request models for the Flow Agent API server."""
 
-from typing import List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -26,7 +26,25 @@ class VideoGenerationRequest(BaseModel):
     image_base64: Optional[str] = Field(None, description="Optional base64 start image for image-to-video")
     ref_media_ids: Optional[List[str]] = Field(None, description="Optional reference image media IDs (up to 10)")
     start_media_id: Optional[str] = Field(None, description="Optional pre-uploaded start image or video media ID")
+    end_media_id: Optional[str] = Field(None, description="Optional pre-uploaded end image media ID (requires start_media_id or image_base64)")
     is_video: Optional[bool] = Field(False, description="True if the pre-uploaded reference is a video")
+
+
+class GeneratedMedia(BaseModel):
+    url: Optional[str] = None
+    media_id: Optional[str] = None
+    warning: Optional[str] = None
+
+
+class VideoGenerationResult(BaseModel):
+    """Stable response shape returned by video submission and polling."""
+
+    job_id: str
+    status: Literal["processing", "succeeded", "failed"]
+    created: int
+    data: List[GeneratedMedia] = Field(default_factory=list)
+    note: Optional[str] = None
+    error: Optional[Dict[str, Any]] = None
 
 
 # Chat completions spec support for custom IDE models

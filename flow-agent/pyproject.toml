@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flow-agent"
-version = "1.0.0"
+version = "2.0.3"
 description = "Programmable, OpenAI-compatible image & video generation on top of Google Flow, with an MCP server."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,6 +14,14 @@ dependencies = [
     "uvicorn>=0.22.0",
     "python-multipart>=0.0.6",
     "cryptography>=42.0",
+    "pillow>=11.0.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "httpx>=0.27.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
 ]
 
 [project.scripts]
@@ -24,3 +32,7 @@ py-modules = ["main"]
 
 [tool.setuptools.packages.find]
 include = ["flow_server*", "flow_engine*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

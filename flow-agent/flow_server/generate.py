@@ -18,7 +18,11 @@ from flow_engine import (
     ExtensionBridge, generate_video, edit_video,
     poll_status, download_video, ASPECTS, DEFAULT_PROJECT,
 )
+from flow_engine.config import OUTPUT_DIR
 from flow_engine.generators.i2v import upload_image, generate_video_i2v, generate_video_fl, generate_video_r2v
+from flow_server.history import MediaNotFoundError
+from flow_server.media_history import record_local_media, resolve_media_reference
+from flow_server.media_types import ensure_correct_extension
 
 
 async def run(args):
@@ -37,7 +41,16 @@ async def run(args):
             if mid:
                 print(f"Uploaded: {path_or_id} -> {mid[:12]}...")
             return mid
-        return path_or_id
+        try:
+            return await resolve_media_reference(
+                path_or_id,
+                bridge,
+                expected_type="image",
+                project_id=args.project_id,
+            )
+        except (MediaNotFoundError, ValueError, RuntimeError) as exc:
+            print(f"Reference media not found: {exc}", file=sys.stderr)
+            return None
 
     if args.start and args.end:
         # First+Last frame mode
@@ -70,8 +83,19 @@ async def run(args):
         media_ids = await generate_video_r2v(bridge, args.prompt, aspect, args.project_id,
                                               ref_media_ids=ref_ids, duration=args.duration)
     elif args.edit:
+        try:
+            edit_id = await resolve_media_reference(
+                args.edit,
+                bridge,
+                expected_type="video",
+                project_id=args.project_id,
+            )
+        except (MediaNotFoundError, ValueError, RuntimeError) as exc:
+            print(f"Edit media not found: {exc}", file=sys.stderr)
+            await bridge.close()
+            return
         media_ids = await edit_video(bridge, args.prompt, aspect, args.project_id,
-                                     video_media_id=args.edit, duration=args.duration)
+                                     video_media_id=edit_id, duration=args.duration)
     else:
         media_ids = await generate_video(bridge, args.prompt, aspect, args.project_id,
                                          duration=args.duration, count=args.count)
@@ -100,6 +124,15 @@ async def run(args):
 
         if await download_video(bridge, media_id, temp_path):
             os.replace(temp_path, out_path)
+            if not args.output_explicit:
+                out_path = ensure_correct_extension(out_path)
+            record_local_media(
+                out_path,
+                media_id=media_id,
+                project_id=args.project_id,
+                prompt=args.prompt,
+                source="generated",
+            )
 
             # Cleanup empty .temp dir
             try:
@@ -115,7 +148,7 @@ async def run(args):
 def main():
     parser = argparse.ArgumentParser(description="Flow Engine — Video Generator")
     parser.add_argument("prompt", help="Text prompt for video")
-    parser.add_argument("--output", "-o", default="omni_output.mp4", help="Output file")
+    parser.add_argument("--output", "-o", default=None, help="Output file")
     parser.add_argument("--aspect", "-a", choices=["portrait", "landscape"], default="portrait")
     parser.add_argument("--duration", "-d", type=int, choices=[4, 6, 8, 10], default=10)
     parser.add_argument("--count", "-c", type=int, choices=[1, 2, 3, 4], default=1)
@@ -129,6 +162,8 @@ def main():
                         help="Reference images for R2V mode")
     parser.add_argument("--project-id", "-p", default=DEFAULT_PROJECT)
     args = parser.parse_args()
+    args.output_explicit = args.output is not None
+    args.output = os.path.abspath(os.path.expanduser(args.output or os.path.join(OUTPUT_DIR, "omni_output.mp4")))
     asyncio.run(run(args))
 
 

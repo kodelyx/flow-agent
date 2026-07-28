@@ -12,8 +12,9 @@ from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 
 from flow_server.config import OUTPUT_DIR
+from flow_server.media_types import ensure_correct_extension
 from flow_server.models import ChatCompletionRequest
-from flow_server.state import verify_api_key, get_active_bridge, publish
+from flow_server.state import verify_api_key, get_active_bridge, publish, append_to_history
 
 from flow_engine import DEFAULT_PROJECT
 from flow_engine.generators.t2i import generate_image, download_image
@@ -90,7 +91,18 @@ async def chat_completions(req: ChatCompletionRequest):
             if not await download_video(active_bridge, media_id, out_path):
                 raise HTTPException(status_code=500, detail="Failed to download video file.")
 
-            download_url, _ = await publish(filename, out_path)
+            out_path = ensure_correct_extension(out_path)
+            filename = os.path.basename(out_path)
+            download_url, r2_key = await publish(filename, out_path)
+            await append_to_history(
+                "video",
+                download_url,
+                prompt,
+                media_id,
+                r2_key,
+                local_path=out_path,
+                project_id=project_id,
+            )
             markdown_response = f"**Video Generated successfully!**\n\n[Download / Play Video]({download_url})\n\n"
         else:
             log.info(f"Custom Chat Prompt: Image Generation -> '{prompt}'")
@@ -106,7 +118,18 @@ async def chat_completions(req: ChatCompletionRequest):
             if not await download_image(active_bridge, url, out_path):
                 raise HTTPException(status_code=500, detail="Failed to download image file.")
 
-            download_url, _ = await publish(filename, out_path)
+            out_path = ensure_correct_extension(out_path)
+            filename = os.path.basename(out_path)
+            download_url, r2_key = await publish(filename, out_path)
+            await append_to_history(
+                "image",
+                download_url,
+                prompt,
+                results[0].get("media_id"),
+                r2_key,
+                local_path=out_path,
+                project_id=project_id,
+            )
             markdown_response = f" **Image Generated successfully!**\n\n![Generated Image]({download_url})\n\n"
 
     # Support streaming mode
