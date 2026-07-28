@@ -4,7 +4,7 @@
 #  Run this ONCE on a new machine:
 #      ./scripts/setup.sh
 #  It will:
-#    1. Install the `flow` + `flow-mcp` CLI
+#    1. Install the unified `flow` CLI
 #    2. Make the backend auto-start on login (LaunchAgent)
 #  MCP is NOT auto-registered — you add it to your own AI client
 #  (Claude Desktop / Cursor / Cline / Antigravity...). See MCP.md.
@@ -47,7 +47,6 @@ if [ -z "$FLOW_BIN" ]; then
   echo '     export PATH="$HOME/.local/bin:$PATH"'
   FLOW_BIN="$HOME/.local/bin/flow"
 fi
-FLOW_MCP_BIN="$(dirname "$FLOW_BIN")/flow-mcp"
 say "flow  → $FLOW_BIN"
 
 # ---- 2. Auto-start on login ---------------------------------------------
@@ -68,7 +67,6 @@ if [ "$OS" = "Darwin" ]; then
     <key>ProgramArguments</key>
     <array>
         <string>${FLOW_BIN}</string>
-        <string>serve</string>
     </array>
     <key>WorkingDirectory</key>
     <string>${PROJECT_DIR}</string>
@@ -103,7 +101,7 @@ Description=Flow Agent Service
 After=network.target
 
 [Service]
-ExecStart=${FLOW_BIN} serve
+ExecStart=${FLOW_BIN}
 WorkingDirectory=${PROJECT_DIR}
 Restart=always
 StandardOutput=journal
@@ -119,7 +117,7 @@ EOF
   say "Backend will now start automatically on every login (systemd)"
   say "Logs → Run 'journalctl --user -u flow-agent -f'"
 else
-  warn "Auto-start not supported on this OS: $OS. Run 'flow serve' manually."
+  warn "Auto-start not supported on this OS: $OS. Run 'flow' manually."
 fi
 
 # ---- Done ---------------------------------------------------------------
@@ -136,15 +134,18 @@ ${BOLD}Next: connect your AI client to the MCP server.${NC}
 
       ${BOLD}../MCP.md${NC}
 
-  The command to point your client at is:
-      ${FLOW_MCP_BIN}
+  Point your client at the unified Flow command:
+      command: ${FLOW_BIN}
+      args:    ["mcp"]
 
 Before generating, make sure Chrome is open at:
   https://labs.google/fx/tools/flow   (logged in, with the Flow Agent extension)
 
 Handy commands:
-  flow status      # is the backend up? extension connected?
-  flow credits     # remaining Google Flow credits
+  flow             # start the backend
+  flow mcp         # start MCP stdio mode
+  flow image       # generate an image
+  flow video       # generate a video
   tail -f "$LOG"   # watch backend logs
 
 To stop auto-start:  ./scripts/uninstall.sh
