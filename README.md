@@ -29,7 +29,7 @@ uv tool install --force .
 Start the backend:
 
 ```bash
-flow serve
+flow
 ```
 
 ## Chrome extension
@@ -68,8 +68,8 @@ Run `flow <command> --help` for every option.
 {
   "mcpServers": {
     "flow": {
-      "command": "flow-mcp",
-      "args": []
+      "command": "flow",
+      "args": ["mcp"]
     }
   }
 }
@@ -104,6 +104,8 @@ Default base URL: `http://127.0.0.1:8001`
 | `POST /v1/images/generations` | Generate images |
 | `POST /v1/videos/generations` | Generate videos |
 | `POST /v1/upload` | Upload image/video references |
+| `GET /sse` | MCP over SSE connection |
+| `POST /messages` | MCP over SSE JSON-RPC messages |
 
 ## Default model
 
@@ -122,21 +124,18 @@ Available aliases:
 ```text
 flow-agent/
 ├── flow-agent/          # CLI, API, MCP and Flow generation backend
-│   ├── specs/           # PyInstaller build specifications
+│   ├── main.py          # Unified `flow` entry point
+│   ├── flow.spec        # Single-executable PyInstaller build
+│   ├── runtime.txt      # Runtime dependency list
+│   ├── flow_server/     # API, MCP/SSE, routes and server state
+│   ├── flow_engine/     # Flow generation, bridge and upload engine
 │   ├── scripts/         # Setup and uninstall scripts
-│   ├── requirements/    # Dependency lists
 │   └── .env             # User-changeable settings only
 ├── flow-extension/      # Chrome extension bridge
 ├── .github/workflows/   # Cross-platform release builds
 ├── MCP.md               # MCP client setup
 └── README.md
 ```
-
-## Security
-
-- Never commit browser cookies, GitHub tokens, tunnel credentials, or generated private media.
-- The repository ignores legacy `config.env`, `github-token`, `cloudflared/`, outputs, logs, and build artifacts.
-- Set `SERVER_API_KEY` before exposing the API outside localhost.
 
 ## License
 

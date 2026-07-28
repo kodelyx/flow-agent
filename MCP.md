@@ -5,20 +5,22 @@ Cline, Windsurf, Antigravity, Claude Code, etc.) can generate images & video dir
 
 You add it **yourself** — it's one small config block. Pick your client below.
 
-> **First:** run `cd flow-agent && ./scripts/setup.sh` once so the backend auto-starts and the `flow-mcp`
-> command exists. The MCP command you point clients at is:
+> **First:** run `cd flow-agent && ./scripts/setup.sh` once so the backend auto-starts and the unified
+> `flow` command exists. Configure MCP clients with:
 >
 > ```
-> flow-mcp
+> command: flow
+> args:    ["mcp"]
 > ```
 >
-> If `flow-mcp` isn't found on PATH, use the full path instead — find it with:
+> If `flow` isn't found on PATH, use the full path instead — find it with:
 >
 > ```bash
-> command -v flow-mcp        # e.g. /Users/you/.local/bin/flow-mcp
+> command -v flow        # e.g. /Users/you/.local/bin/flow
 > ```
 >
-> The backend (`flow serve`) must be running — `setup.sh` makes that automatic.
+> The backend (`flow`) must be running — `setup.sh` makes that automatic. `flow mcp`
+> is the stdio transport; `/sse` is served by the backend.
 
 ---
 
@@ -31,8 +33,8 @@ Edit (create if missing):
 {
   "mcpServers": {
     "flow": {
-      "command": "flow-mcp",
-      "args": []
+      "command": "flow",
+      "args": ["mcp"]
     }
   }
 }
@@ -51,8 +53,8 @@ existing `"mcpServers"` object. **Restart Claude Desktop** after saving.
 {
   "mcpServers": {
     "flow": {
-      "command": "flow-mcp",
-      "args": []
+      "command": "flow",
+      "args": ["mcp"]
     }
   }
 }
@@ -68,8 +70,8 @@ Cline → MCP Servers → `Configure MCP Servers`, add:
 {
   "mcpServers": {
     "flow": {
-      "command": "flow-mcp",
-      "args": []
+      "command": "flow",
+      "args": ["mcp"]
     }
   }
 }
@@ -85,8 +87,8 @@ Cline → MCP Servers → `Configure MCP Servers`, add:
 {
   "mcpServers": {
     "flow": {
-      "command": "flow-mcp",
-      "args": []
+      "command": "flow",
+      "args": ["mcp"]
     }
   }
 }
@@ -102,8 +104,8 @@ Antigravity → MCP settings → add a server with:
 {
   "mcpServers": {
     "flow": {
-      "command": "flow-mcp",
-      "args": []
+      "command": "flow",
+      "args": ["mcp"]
     }
   }
 }
@@ -114,7 +116,7 @@ Antigravity → MCP settings → add a server with:
 ## Claude Code (CLI)
 
 ```bash
-claude mcp add flow flow-mcp
+claude mcp add flow -- flow mcp
 ```
 
 ---
@@ -123,11 +125,11 @@ claude mcp add flow flow-mcp
 
 The pattern is always the same — a **stdio** server:
 
-| Field   | Value      |
-|---------|------------|
-| command | `flow-mcp` |
-| args    | *(none)*   |
-| type    | stdio      |
+| Field   | Value     |
+|---------|-----------|
+| command | `flow`    |
+| args    | `["mcp"]` |
+| type    | stdio     |
 
 If your client only supports **SSE/HTTP**, point it at:
 
@@ -156,6 +158,6 @@ Once connected, these tools are available to the AI:
 ## Troubleshooting
 
 - **Client shows "flow" but tools fail** → the backend isn't running. Check
-  `flow status`; if down, `launchctl load ~/Library/LaunchAgents/com.flow.agent.plist`.
-- **"command not found: flow-mcp"** → use the full path from `command -v flow-mcp`.
+  `flow status`; if down, run `flow` or load the configured background service.
+- **"command not found: flow"** → use the full path from `command -v flow`.
 - **Images/videos time out or hit reCAPTCHA limits** → Make sure you are logged in on the Google Flow page. To scale up and bypass rate limits, load the extension across multiple Chrome profiles (multi-browser) or multiple PCs (multi-PC) in your local network. The backend automatically load-balances requests across all active connections.
