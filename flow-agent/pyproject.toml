@@ -17,11 +17,10 @@ dependencies = [
 ]
 
 [project.scripts]
-flow = "flow_cli.main:main"
-flow-mcp = "flow_mcp_server:main"
+flow = "main:main"
 
 [tool.setuptools]
-py-modules = ["flow_mcp_server"]
+py-modules = ["main"]
 
 [tool.setuptools.packages.find]
-include = ["flow_cli*", "cli*", "omniflash*"]
+include = ["flow_server*", "flow_engine*"]

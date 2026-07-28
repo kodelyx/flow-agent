@@ -14,16 +14,16 @@ $FlowBin = Get-Command flow.exe -ErrorAction SilentlyContinue | Select-Object -E
 
 # 2. Check local directory for prebuilt binaries
 if (-not $FlowBin) {
-    if (Test-Path "$ProjectDir\flow-cli-windows.exe") {
-        $FlowBin = Resolve-Path "$ProjectDir\flow-cli-windows.exe"
-    } elseif (Test-Path "$ProjectDir\dist\flow-cli-windows.exe") {
-        $FlowBin = Resolve-Path "$ProjectDir\dist\flow-cli-windows.exe"
+    if (Test-Path "$ProjectDir\flow.exe") {
+        $FlowBin = Resolve-Path "$ProjectDir\flow.exe"
+    } elseif (Test-Path "$ProjectDir\dist\flow.exe") {
+        $FlowBin = Resolve-Path "$ProjectDir\dist\flow.exe"
     }
 }
 
 if (-not $FlowBin) {
-    Write-Host "× Could not find flow.exe on PATH or flow-cli-windows.exe in the current directory." -ForegroundColor Red
-    Write-Host "Please download flow-cli-windows.exe and place it in the same folder as this script, or install the CLI via uv." -ForegroundColor Yellow
+    Write-Host "× Could not find flow.exe on PATH or in the current directory." -ForegroundColor Red
+    Write-Host "Please download flow.exe and place it in the same folder as this script, or install Flow via uv." -ForegroundColor Yellow
     Exit 1
 }
 
@@ -38,11 +38,11 @@ $ShortcutPath = [System.IO.Path]::Combine($StartupFolder, "flow-agent.lnk")
 $WshShell = New-Object -ComObject WScript.Shell
 $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
 $Shortcut.TargetPath = $FlowBin
-$Shortcut.Arguments = "serve"
+$Shortcut.Arguments = ""
 $Shortcut.WorkingDirectory = $ProjectDir
 $Shortcut.Save()
 
 Write-Host "✔ Shortcut created in Startup folder: $ShortcutPath" -ForegroundColor Green
 Write-Host "🎉 All done! Flow Agent will now start automatically in the background whenever you log in." -ForegroundColor Green
 Write-Host "To test it right now, you can run:" -ForegroundColor Yellow
-Write-Host "    & '$FlowBin' serve" -ForegroundColor Yellow
+Write-Host "    & '$FlowBin'" -ForegroundColor Yellow
