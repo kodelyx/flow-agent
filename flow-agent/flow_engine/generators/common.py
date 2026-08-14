@@ -10,6 +10,7 @@ import os
 import random
 import time
 import uuid
+import urllib.request
 
 from ..config import (
     CLIENT_CTX, ENDPOINTS, POLL_INTERVAL, POLL_TIMEOUT,
@@ -86,7 +87,24 @@ async def poll_status(bridge, media_id: str, project_id: str) -> bool:
 
 
 async def download_video(bridge, media_id: str, output_path: str) -> bool:
-    """Download video via get_media API."""
+    """Download video from Google's signed URL, with legacy API fallback."""
+    signed_url = await bridge.request_media_url(media_id)
+    if signed_url:
+        try:
+            request = urllib.request.Request(signed_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(request, timeout=90) as response:
+                video_bytes = response.read()
+            mime_type = sniff_media_type(video_bytes)
+            if mime_type.startswith("video/"):
+                os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+                with open(output_path, "wb") as f:
+                    f.write(video_bytes)
+                log.info("Saved signed media URL: %s (%.1f MB, %s)", output_path, len(video_bytes) / (1024 * 1024), mime_type)
+                return True
+            log.warning("Signed media URL for %s returned %s", media_id, mime_type)
+        except Exception as exc:
+            log.warning("Signed media URL download failed for %s: %s", media_id, exc)
+
     url_path = ENDPOINTS["get_media"].format(media_id=media_id)
     result = await bridge.api_request(url_path, {}, captcha_action="", method="GET")
     data = result.get("data", result)
@@ -100,7 +118,7 @@ async def download_video(bridge, media_id: str, output_path: str) -> bool:
             video_b64 = v
 
     if not video_b64:
-        log.error("No video data in response")
+        log.error("No video data in legacy response for %s: %r", media_id, result)
         return False
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)

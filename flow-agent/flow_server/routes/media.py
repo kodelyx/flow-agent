@@ -34,6 +34,16 @@ log = logging.getLogger("flow_engine.openai_api")
 router = APIRouter()
 
 
+@router.get("/v1/media/{media_id}/url", dependencies=[Depends(verify_api_key)])
+async def resolve_media_url(media_id: str):
+    """Resolve a ready Flow media ID to a fresh signed CDN URL."""
+    active_bridge = await get_active_bridge()
+    url = await active_bridge.request_media_url(media_id)
+    if not url:
+        raise HTTPException(status_code=404, detail=f"No signed URL available for media {media_id}")
+    return {"media_id": media_id, "url": url}
+
+
 @router.post("/v1/upload", dependencies=[Depends(verify_api_key)])
 async def upload_file_endpoint(req: UploadRequest):
     """Upload a file (image or video) to Google Flow and return its media ID and local URL."""

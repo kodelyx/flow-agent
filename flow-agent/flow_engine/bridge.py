@@ -507,6 +507,7 @@ class ExtensionBridge:
             if client_id:
                 self._tokens[client_id] = data.get("flowKey")
                 self._states[client_id] = "idle"
+
                 self.http_registry.hello(str(client_id), data.get("flowKey"), self._callback_secret)
                 if self._loop is not None:
                     self._loop.call_soon_threadsafe(self._connected.set)
@@ -515,6 +516,29 @@ class ExtensionBridge:
             session_id = data.get("session_id") or data.get("sessionId")
             return bool(session_id and self.http_registry.touch(str(session_id)))
         return False
+
+    async def request_media_url(self, media_id: str, client_id: str | None = None, timeout: float = 30) -> str | None:
+        """Ask the extension to resolve Google's short-lived signed media URL."""
+        client_id = client_id or target_client_id_var.get() or self._select_client()
+        if not client_id:
+            return None
+        req_id = str(uuid.uuid4())
+        future = self._loop.create_future()
+        self._pending[req_id] = future
+        sent = await self.send_message_to(client_id, {"id": req_id, "method": "get_media_url", "params": {"media_id": media_id}})
+        if not sent:
+            self._pending.pop(req_id, None)
+            return None
+        try:
+            result = await asyncio.wait_for(future, timeout=timeout)
+            if isinstance(result, dict):
+                data = result.get("result", result)
+                return data.get("url") if isinstance(data, dict) else None
+        except asyncio.TimeoutError:
+            log.warning("Timed out resolving signed media URL for %s", media_id)
+        finally:
+            self._pending.pop(req_id, None)
+        return None
 
     def _get_global_lock(self):
         """Build or retrieve global concurrency lock for IP-wide spacing."""

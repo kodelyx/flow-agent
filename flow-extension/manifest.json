@@ -22,6 +22,7 @@
     "https://aisandbox-pa.googleapis.com/*",
     "https://aisandbox-pa.sandbox.googleapis.com/*",
     "https://storage.googleapis.com/*",
+    "https://flow-content.google/*",
     "http://127.0.0.1:8001/*",
     "http://localhost:8001/*",
     "https://flow.kodelyx.in/*"

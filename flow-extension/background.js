@@ -342,6 +342,8 @@ async function connectToAgent() {
 
       if (msg.method === 'api_request') {
         await handleApiRequest(msg);
+      } else if (msg.method === 'get_media_url') {
+        await handleGetMediaUrl(msg);
       } else if (msg.method === 'trpc_request') {
         await handleTrpcRequest(msg);
       } else if (msg.method === 'upload_video') {
@@ -935,6 +937,21 @@ async function handleApiRequest(msg) {
   setState('idle');
 }
 
+async function handleGetMediaUrl(msg) {
+  const { id, params } = msg;
+  const mediaId = params?.media_id;
+  if (!mediaId) { sendToAgent({ id, error: 'MISSING_MEDIA_ID' }); return; }
+  try {
+    const url = new URL('https://labs.google/fx/api/trpc/media.getMediaUrlRedirect');
+    url.searchParams.set('name', mediaId);
+    const response = await fetch(url.toString(), { credentials: 'include', redirect: 'follow' });
+    if (!response.ok) { sendToAgent({ id, status: response.status, error: `MEDIA_URL_HTTP_${response.status}` }); return; }
+    sendToAgent({ id, status: 200, result: { url: response.url } });
+  } catch (error) {
+    sendToAgent({ id, error: `MEDIA_URL_FAILED: ${error.message}` });
+  }
+}
+
 // ─── State & Popup ──────────────────────────────────────────
 
 function setState(newState) {
@@ -1088,7 +1105,7 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
 function handleTrpcMediaUrls(trpcUrl, bodyText) {
   try {
     // Extract all fresh GCS signed URLs
-    const urlRegex = /https:\/\/storage\.googleapis\.com\/ai-sandbox-videofx\/(?:image|video)\/[0-9a-f-]{36}\?[^"'\s]+/g;
+    const urlRegex = /https:\/\/(?:storage\.googleapis\.com\/ai-sandbox-videofx|flow-content\.google\/(?:image|video))\/[0-9a-f-]{36}\?[^"'\s]+/g;
     const matches = bodyText.match(urlRegex) || [];
     if (!matches.length) return;
 
@@ -1112,12 +1129,7 @@ function handleTrpcMediaUrls(trpcUrl, bodyText) {
     // URL refresh is silent — don't show in request log
 
     // Forward to agent for DB update
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'media_urls_refresh',
-        urls: entries,
-      }));
-    }
+    sendToAgent({ type: 'media_urls_refresh', urls: entries, session_id: extensionClientId });
   } catch (e) {
     console.error('[Flow Agent] Failed to extract TRPC media URLs:', e);
   }
