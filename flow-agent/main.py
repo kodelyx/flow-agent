@@ -489,7 +489,7 @@ def cmd_image(argv):
     )
     parser.add_argument("--count", "-c", type=int, choices=[1, 2, 3, 4], default=1)
     parser.add_argument("--ref", "-r", nargs="+", metavar="IMAGE", help="Reference path or media ID")
-    parser.add_argument("--model", "-m", default="gem_pix_2")
+    parser.add_argument("--model", "-m", default="narwhal")
     parser.add_argument("--idempotency-key", help="Reuse a previous paid request safely")
     args = parser.parse_args(argv)
 
@@ -674,12 +674,6 @@ def cmd_upload(argv):
         print(json.dumps({"path": os.path.abspath(path), **result}, indent=2))
 
 
-def cmd_sniff(argv):
-    from flow_server.sniff import main as sniff_main
-
-    _forward(sniff_main, argv)
-
-
 def cmd_credits(argv):
     parser = argparse.ArgumentParser(prog="flow credits", description="Show Flow credits.")
     parser.parse_args(argv)
@@ -704,13 +698,20 @@ def cmd_status(argv):
     print(f"  has_flow_key:        {health.get('has_flow_key')}")
 
 
+def cmd_batch(argv):
+    _wait_for_generation_ready()
+    from flow_server.batch import main as batch_main
+
+    batch_main(argv)
+
+
 COMMANDS = {
     "mcp": run_mcp,
     "image": cmd_image,
+    "batch": cmd_batch,
     "video": cmd_video,
     "edit": cmd_edit,
     "upload": cmd_upload,
-    "sniff": cmd_sniff,
     "credits": cmd_credits,
     "status": cmd_status,
 }
@@ -724,10 +725,10 @@ def _usage():
     print("Commands:")
     print("  mcp        Run MCP stdio mode")
     print("  image      Generate images")
+    print("  batch      Generate batch images in parallel")
     print("  video      Generate videos")
     print("  edit       Edit a video")
     print("  upload     Upload media")
-    print("  sniff      Capture Flow API requests")
     print("  credits    Show Flow credits")
     print("  status     Show backend health")
 

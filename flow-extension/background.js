@@ -192,15 +192,32 @@ function isFlowUrl(url) {
   return !!url && FLOW_TAB_URLS.some((p) => new RegExp(p.replace(/\./g, '\\.').replace(/\*/g, '.*')).test(url));
 }
 
+async function waitForTabComplete(tabId, maxWaitMs = 10000) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    function listener(updatedTabId, changeInfo, tab) {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') {
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve(tab);
+      }
+    }
+    chrome.tabs.onUpdated.addListener(listener);
+    setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      chrome.tabs.get(tabId).then(resolve).catch(() => resolve(null));
+    }, maxWaitMs);
+  });
+}
+
 // Finds/wakes/creates the Flow tab. Returns
 // the tab, or null if it couldn't be opened.
 async function _getOrOpenFlowTab() {
-  if (workTabId) {
+  if (workTabId !== null) {
     try {
       let tab = await chrome.tabs.get(workTabId);
       if (tab && !isFlowUrl(tab.url)) {
         await chrome.tabs.update(workTabId, { url: FLOW_URL });
-        await sleep(3000);
+        await waitForTabComplete(workTabId);
         tab = await chrome.tabs.get(workTabId);
       }
       scheduleFlowTabClose();
@@ -220,10 +237,19 @@ async function _getOrOpenFlowTab() {
   const createdTab = await chrome.tabs.create({ url: FLOW_URL, active: false });
   workTabId = createdTab.id;
   workTabCreatedByExtension = true;
-  await sleep(3000);
-  const retryTabs = await chrome.tabs.query({ url: FLOW_TAB_URLS });
-  if (!retryTabs.length) return null;
-  workTabId = retryTabs[0].id;
+  await waitForTabComplete(workTabId);
+  await sleep(1500);
+
+  // Inject content script to make sure reCAPTCHA bridge is ready
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: workTabId },
+      files: ['content.js'],
+    });
+  } catch (e) {
+    console.warn('[Flow Agent] Content script pre-injection:', e.message);
+  }
+
   scheduleFlowTabClose();
   return retryTabs[0];
 }
@@ -518,10 +544,13 @@ async function pollHttpCommands() {
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
-    for (const command of data.commands || []) {
-      if (typeof ws?.onmessage === 'function') {
-        await ws.onmessage({ data: JSON.stringify(command) });
-      }
+    const commands = data.commands || [];
+    if (commands.length > 0 && typeof ws?.onmessage === 'function') {
+      commands.forEach((command) => {
+        Promise.resolve(ws.onmessage({ data: JSON.stringify(command) })).catch((err) => {
+          console.error('[Flow Agent] Command execution error:', err);
+        });
+      });
     }
     scheduleHttpPoll();
   } catch (error) {

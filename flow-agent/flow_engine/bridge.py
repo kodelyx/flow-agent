@@ -148,52 +148,38 @@ class ExtensionBridge:
         return self._tiers.get(cid, "G1_FREEMIUM") != "G1_TIER1"
 
     def _select_client(self) -> str | None:
-        """Selects the best connected client to route a request to.
-        Prioritizes:
-          1. Idle clients with captured tokens (free tier before pro).
-          2. Any connected client with a captured token (free before pro).
-          3. Any connected client.
-        Free (G1_FREEMIUM) clients are always drained before paid (G1_TIER1)
-        ones so pro credits are only touched once free credits run out.
-        """
-        connected_ids = list(self._clients.keys())
+        """True Round-Robin load balancer across all connected active workers."""
+        if not hasattr(self, "_rr_index"):
+            self._rr_index = 0
+
+        connected_ids = sorted(list(self._clients.keys()))
         if not connected_ids:
             return "__http__" if self.http_registry.has_online_session() else None
 
-        def _pick(pool):
-            """Prefer free-tier clients in the pool; fall back to pro."""
-            free = [c for c in pool if self._is_free(c)]
-            if free:
-                return random.choice(free)
-            return random.choice(pool) if pool else None
-
         # Filter clients with active tokens
         with_tokens = [cid for cid in connected_ids if self._tokens.get(cid)]
+        pool = with_tokens if with_tokens else connected_ids
 
-        # Filter idle clients with tokens
-        idle_with_tokens = [cid for cid in with_tokens if self._states.get(cid) == "idle"]
-        if idle_with_tokens:
-            return _pick(idle_with_tokens)
+        # Prioritize idle clients if available
+        idle_pool = [cid for cid in pool if self._states.get(cid) == "idle"]
+        target_pool = idle_pool if idle_pool else pool
 
-        if with_tokens:
-            return _pick(with_tokens)
-
-        return random.choice(connected_ids)
+        # True Round-Robin pick
+        selected = target_pool[self._rr_index % len(target_pool)]
+        self._rr_index = (self._rr_index + 1) % 1000000
+        return selected
 
     def _select_client_for_cost(self, cost: int) -> str | None:
-        """Pick a client that can actually afford a `cost`-credit job.
-
-        Same free-before-pro priority as _select_client, but additionally skips
-        any client whose last-known balance is below `cost`. This prevents
-        routing a 15-credit video to a browser that only has 5 credits left
-        while a 50-credit browser sits idle. Clients with no cached balance yet
-        are treated as affordable (optimistic — the real credit gate re-checks
-        on the pinned client before generating).
-        """
+        """Pick a client that can afford `cost` credits, prioritizing FREE (G1_FREEMIUM)
+        accounts first so daily renewable 50 credits are spent before touching Pro credits.
+        Uses Round-Robin within each tier pool."""
         if cost <= 0:
             return self._select_client()
 
-        connected_ids = list(self._clients.keys())
+        if not hasattr(self, "_rr_index"):
+            self._rr_index = 0
+
+        connected_ids = sorted(list(self._clients.keys()))
         if not connected_ids:
             return None
 
@@ -201,32 +187,30 @@ class ExtensionBridge:
             bal = self._credits.get(cid)
             return bal is None or bal >= cost
 
-        def _pick(pool):
-            pool = [c for c in pool if _affordable(c)]
-            if not pool:
-                return None
-            free = [c for c in pool if self._is_free(c)]
-            if free:
-                # Prefer the free client with the MOST credits so it drains cleanly.
-                known = [c for c in free if self._credits.get(c) is not None]
-                if known:
-                    return max(known, key=lambda c: self._credits[c])
-                return random.choice(free)
-            known = [c for c in pool if self._credits.get(c) is not None]
-            if known:
-                return max(known, key=lambda c: self._credits[c])
-            return random.choice(pool)
+        # 1. First priority: Free accounts with enough credits (drain daily 50 credits first)
+        free_pool = [c for c in connected_ids if self._is_free(c) and _affordable(c) and self._tokens.get(c)]
+        if not free_pool:
+            free_pool = [c for c in connected_ids if self._is_free(c) and _affordable(c)]
 
-        with_tokens = [cid for cid in connected_ids if self._tokens.get(cid)]
-        idle_with_tokens = [cid for cid in with_tokens if self._states.get(cid) == "idle"]
+        if free_pool:
+            idle_free = [c for c in free_pool if self._states.get(c) == "idle"]
+            target_pool = idle_free if idle_free else free_pool
+            selected = target_pool[self._rr_index % len(target_pool)]
+            self._rr_index = (self._rr_index + 1) % 1000000
+            return selected
 
-        pick = _pick(idle_with_tokens)
-        if pick:
-            return pick
-        pick = _pick(with_tokens)
-        if pick:
-            return pick
-        # Nobody provably affords it → fall back to normal selection (gate will 402).
+        # 2. Second priority (when free credits run out): Pro accounts
+        pro_pool = [c for c in connected_ids if not self._is_free(c) and _affordable(c) and self._tokens.get(c)]
+        if not pro_pool:
+            pro_pool = [c for c in connected_ids if not self._is_free(c) and _affordable(c)]
+
+        if pro_pool:
+            idle_pro = [c for c in pro_pool if self._states.get(c) == "idle"]
+            target_pool = idle_pro if idle_pro else pro_pool
+            selected = target_pool[self._rr_index % len(target_pool)]
+            self._rr_index = (self._rr_index + 1) % 1000000
+            return selected
+
         return self._select_client()
 
     async def send_message_to(self, client_id, msg):
@@ -550,7 +534,7 @@ class ExtensionBridge:
     async def _space_out_global_requests(self):
         """Ensure a minimum gap between requests across the entire client pool (IP level)."""
         import os
-        global_interval = float(os.environ.get("GLOBAL_REQUEST_MIN_INTERVAL", "3.5"))
+        global_interval = float(os.environ.get("GLOBAL_REQUEST_MIN_INTERVAL", "0.0"))
         lock = self._get_global_lock()
         async with lock:
             now = self._loop.time()
@@ -560,9 +544,9 @@ class ExtensionBridge:
             self._last_global_req_at = self._loop.time()
 
     def _get_global_sem(self):
-        """Build or retrieve global request semaphore to limit parallel execution across all nodes."""
+        """Global pool capacity across all connected workers (scales dynamically)."""
         if not hasattr(self, "_global_sem"):
-            self._global_sem = asyncio.Semaphore(max(1, MAX_CONCURRENT_REQUESTS))
+            self._global_sem = asyncio.Semaphore(max(100, len(self._clients) * MAX_CONCURRENT_REQUESTS))
         return self._global_sem
 
     async def _wait_startup_cooldown(self):
@@ -617,11 +601,12 @@ class ExtensionBridge:
 
     def _select_client_excluding(self, exclude_id) -> str | None:
         """Pick another connected client with a token, skipping exclude_id."""
-        candidates = [c for c in self._clients if c != exclude_id and self._tokens.get(c)]
+        candidates = sorted([c for c in self._clients if c != exclude_id and self._tokens.get(c)])
         if not candidates:
             return None
-        free = [c for c in candidates if self._is_free(c)]
-        return random.choice(free) if free else random.choice(candidates)
+        selected = candidates[self._rr_index % len(candidates)]
+        self._rr_index = (self._rr_index + 1) % 1000000
+        return selected
 
     async def _run_api_request(self, client_id, url_path, body, captcha_action, method, timeout, meta):
         """Execute a single request attempt against one client, applying the
@@ -667,6 +652,20 @@ class ExtensionBridge:
         url = f"{API_BASE}{url_path}?key={API_KEY}"
         ua = random.choice(USER_AGENTS)
         platform = '"macOS"' if "Macintosh" in ua else '"Windows"'
+
+        # Ensure userPaygateTier matches the assigned client's account tier (Pro vs Freemium)
+        if isinstance(body, dict):
+            import copy
+            body = copy.deepcopy(body)
+            is_free = self._tiers.get(client_id, "") == "G1_FREEMIUM"
+            tier_val = "PAYGATE_TIER_NOT_PAID" if is_free else "PAYGATE_TIER_ONE"
+
+            if "clientContext" in body and isinstance(body["clientContext"], dict):
+                body["clientContext"]["userPaygateTier"] = tier_val
+            if "requests" in body and isinstance(body["requests"], list):
+                for r in body["requests"]:
+                    if isinstance(r, dict) and "clientContext" in r and isinstance(r["clientContext"], dict):
+                        r["clientContext"]["userPaygateTier"] = tier_val
 
         msg = {
             "id": req_id,

@@ -281,7 +281,8 @@ async def _generate_image(req: ImageGenerationRequest, x_client_id: Optional[str
             served_url, r2_key = await publish(filename, out_path)
             data_outputs.append({
                 "url": served_url,
-                "media_id": r.get("media_id")
+                "media_id": r.get("media_id"),
+                "client_id": r.get("_client_id", ""),
             })
             await append_to_history(
                 "image",

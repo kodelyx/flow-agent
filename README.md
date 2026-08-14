@@ -104,7 +104,7 @@ Run `flow <command> --help` for every available option.
 ### Images
 
 ```bash
-flow image "a cinematic neon city" --model gem_pix_2 --aspect landscape
+flow image "a cinematic neon city" --model narwhal --aspect landscape
 flow image "restyle this character" --ref character.png --count 2
 flow image "a product photo" --output /absolute/path/result.png
 flow image "a product photo" --output /absolute/path/result.jpg
@@ -155,6 +155,29 @@ flow video "waves moving slowly" --idempotency-key waves-v1
 
 The same key and payload reuse the original result or job. Reusing a key with a
 different payload returns a conflict instead of starting another generation.
+
+### Multi-Worker Parallel Batch Generation (`flow batch`)
+
+Flow Agent supports high-speed parallel batch generation across multiple connected Chrome extension workers with **True Round-Robin Load Balancing**:
+
+```bash
+# 1. Parallel Batch Images (Default: narwhal / Nano Banana 2, 0 credits):
+flow batch prompts.txt -o output_images/ -c 16 -s 1.0 -a landscape
+
+# 2. Parallel Batch Videos (4, 6, 8, 10s durations):
+flow batch prompts.txt --type video -d 4 -o output_videos/ -c 4 -s 2.0 -a landscape
+```
+
+**Key Batch Capabilities:**
+- **Dynamic Multi-Worker Scaling:** Automatically scales concurrency (e.g. 4 workers = 16 parallel slots; 100 workers = 400 slots).
+- **True Round-Robin Balancing:** Evenly rotates prompts across all connected browser workers.
+- **Smart Tier Priority for Videos:** Automatically drains daily 50 free credits from Freemium workers first before consuming Pro credits.
+- **Worker Attribution & Breakdown:** Prints live `via [client_id]` worker logs and displays a final performance breakdown summary table.
+
+**Concurrency & Rate Limiting Configuration:**
+- `MAX_CONCURRENT_REQUESTS` (default `4`): Active parallel slots allowed across workers.
+- `REQUEST_MIN_INTERVAL` (default `2.0`): Automatic 2.0s stagger gap between consecutive requests to prevent Google Flow server rate limits and dropouts.
+- `API_REQUEST_TIMEOUT` (default `60`): Fast timeout with self-healing retry.
 
 ## Output files and media history
 
@@ -304,7 +327,7 @@ Environment variables take precedence over values in `.env`.
 | `FLOW_OUTPUT_DIR` | beside `flow` | Generated files and `history.json` |
 | `FLOW_HISTORY_FILE` | `<output>/history.json` | Optional history path override |
 | `DEFAULT_PROJECT` | bundled default | Google Flow project ID |
-| `IMAGE_MODEL` | `gem_pix_2` | Default image model |
+| `IMAGE_MODEL` | `narwhal` | Default image model (Nano Banana 2) |
 | `PUBLIC_BASE_URL` | `http://localhost:8001` | URLs returned for local media |
 | `SERVER_API_KEY` | unset | Optional backend bearer authentication |
 | `FLOW_READY_TIMEOUT` | `30` | CLI readiness wait in seconds |

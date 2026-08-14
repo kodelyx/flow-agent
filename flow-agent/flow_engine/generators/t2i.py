@@ -121,6 +121,11 @@ async def generate_image(bridge, prompt: str, aspect: str, project_id: str,
         meta={"prompt": prompt, "count": count},
     )
 
+    client_id = result.get("_client_id", "") if isinstance(result, dict) else ""
+    parsed = _parse_image_results(result.get("data", {}))
+    for p in parsed:
+        p["_client_id"] = client_id
+
     status = result.get("status", 0)
     if status != 200:
         if result.get("error") == "TIMEOUT":

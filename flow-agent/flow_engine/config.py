@@ -81,15 +81,16 @@ IMAGE_MODELS = {
     "harbor_seal": "HARBOR_SEAL",
     "lite": "HARBOR_SEAL",
     "narwhal": "NARWHAL",
+    "nano_banana_2": "NARWHAL",
     "standard": "NARWHAL",
     "gem_pix_2": "GEM_PIX_2",
     "pro": "GEM_PIX_2",
 }
 
-DEFAULT_IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "GEM_PIX_2")
+DEFAULT_IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "NARWHAL")
 if DEFAULT_IMAGE_MODEL not in IMAGE_MODELS.values():
     # If the env var is one of the keys, resolve it
-    DEFAULT_IMAGE_MODEL = IMAGE_MODELS.get(DEFAULT_IMAGE_MODEL.lower(), "GEM_PIX_2")
+    DEFAULT_IMAGE_MODEL = IMAGE_MODELS.get(DEFAULT_IMAGE_MODEL.lower(), "NARWHAL")
 
 
 # ─── Hardcoded constants (never change) ──────────────────────
@@ -158,15 +159,14 @@ ENABLE_EXTENSION_WS = os.environ.get("ENABLE_EXTENSION_WS", "1").strip().lower()
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "10"))
 POLL_TIMEOUT = int(os.environ.get("POLL_TIMEOUT", "420"))
 
-# Max seconds to wait for a single extension roundtrip (a generation submit
-# call can legitimately run past a minute, so this must exceed 90s).
-API_REQUEST_TIMEOUT = int(os.environ.get("API_REQUEST_TIMEOUT", "180"))
+# Max seconds to wait for a single extension roundtrip (fail fast to allow auto-retry).
+API_REQUEST_TIMEOUT = int(os.environ.get("API_REQUEST_TIMEOUT", "60"))
 
 # ─── Rate limiting (protects against Google's UNUSUAL_ACTIVITY throttle) ──────
-# Max generation requests allowed to be in flight at the same time.
-MAX_CONCURRENT_REQUESTS = int(os.environ.get("MAX_CONCURRENT_REQUESTS", "5"))
-# Minimum spacing between the start of consecutive generation requests (seconds).
-REQUEST_MIN_INTERVAL = float(os.environ.get("REQUEST_MIN_INTERVAL", "3"))
+# Optimal concurrent requests in flight per worker (4 parallel slots).
+MAX_CONCURRENT_REQUESTS = int(os.environ.get("MAX_CONCURRENT_REQUESTS", "4"))
+# Minimum spacing between the start of consecutive generation requests (2.0s stagger).
+REQUEST_MIN_INTERVAL = float(os.environ.get("REQUEST_MIN_INTERVAL", "2.0"))
 
 SEGMENT_DURATION = 10
 FPS = 24
