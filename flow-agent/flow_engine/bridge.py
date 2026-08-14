@@ -9,9 +9,11 @@ import time as _time
 import contextvars
 
 import asyncio
+import hmac
 import json
 import logging
 import random
+import secrets
 import threading
 import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -25,6 +27,7 @@ from .config import (
     CLIENT_CTX, USER_AGENTS, API_REQUEST_TIMEOUT,
     MAX_CONCURRENT_REQUESTS, REQUEST_MIN_INTERVAL,
 )
+from .http_bridge import ExtensionHttpRegistry
 
 log = logging.getLogger("flow_engine.bridge")
 
@@ -37,7 +40,7 @@ class ExtensionBridge:
     # simultaneously and the first request landing before Google stabilises.
     STARTUP_COOLDOWN = 10
 
-    def __init__(self):
+    def __init__(self, session_ttl_sec: float = 15.0):
         self._clients: dict[str, websockets.WebSocketServerProtocol] = {}  # client_id -> WebSocket
         self._tokens: dict[str, str] = {}         # client_id -> flowKey
         self._states: dict[str, str] = {}         # client_id -> state ('idle' | 'running')
@@ -57,6 +60,46 @@ class ExtensionBridge:
         self._client_sems: dict[str, asyncio.Semaphore] = {}
         self._client_locks: dict[str, asyncio.Lock] = {}
         self._client_last_request_at: dict[str, float] = {}
+        self._http_server = None
+        self._callback_secret = secrets.token_urlsafe(32)
+        self.http_registry = ExtensionHttpRegistry(session_ttl_sec=session_ttl_sec)
+
+    def is_extension_connected(self) -> bool:
+        return bool(self._clients) or self.http_registry.has_online_session()
+
+    def has_flow_key(self) -> bool:
+        return bool(any(self._tokens.values()) or self.http_registry.get_flow_key())
+
+    def active_transport(self) -> str:
+        if self.http_registry.has_online_session():
+            return "http"
+        return "ws" if self._clients else "none"
+
+    def register_http_session(self, session_id, flow_key=None, *, secret=None, meta=None):
+        resolved_secret = secret or self._callback_secret
+        result = self.http_registry.hello(session_id, flow_key, resolved_secret, meta)
+        if flow_key:
+            self._tokens[str(session_id)] = flow_key
+            self._states[str(session_id)] = "idle"
+            self._connected.set()
+        return result
+
+    def enqueue_http_command(self, command):
+        return self.http_registry.enqueue(None, command)
+
+    def poll_http_commands(self, session_id, max_commands=10):
+        return self.http_registry.poll(session_id, max_commands=max_commands)
+
+    def verify_http_session_authorization(self, session_id, authorization):
+        return self.http_registry.verify_authorization(session_id, authorization)
+
+    def verify_callback_authorization(self, authorization):
+        candidate = ""
+        if isinstance(authorization, str):
+            scheme, separator, value = authorization.partition(" ")
+            if separator and scheme.lower() == "bearer":
+                candidate = value.strip()
+        return hmac.compare_digest(candidate, self._callback_secret)
 
     @property
     def _ws(self):
@@ -115,7 +158,7 @@ class ExtensionBridge:
         """
         connected_ids = list(self._clients.keys())
         if not connected_ids:
-            return None
+            return "__http__" if self.http_registry.has_online_session() else None
 
         def _pick(pool):
             """Prefer free-tier clients in the pool; fall back to pro."""
@@ -188,6 +231,8 @@ class ExtensionBridge:
 
     async def send_message_to(self, client_id, msg):
         """Send message to a specific client in the pool."""
+        if client_id == "__http__" or self.http_registry.is_connected(client_id):
+            return self.http_registry.enqueue(None if client_id == "__http__" else client_id, msg)
         ws = self._clients.get(client_id)
         if not ws:
             log.warning("Client %s not connected", client_id)
@@ -225,7 +270,7 @@ class ExtensionBridge:
         try:
             await ws.send_text(json.dumps({
                 "type": "callback_config",
-                "secret": "flow_secret",
+                "secret": self._callback_secret,
                 "callback_url": callback_url
             }))
         except Exception as e:
@@ -349,7 +394,7 @@ class ExtensionBridge:
     async def health_check(self):
         """Quick check if at least one extension is ready with valid token."""
         active_clients = [cid for cid in self._clients if self._tokens.get(cid)]
-        return len(active_clients) > 0
+        return bool(active_clients or (self.http_registry.has_online_session() and self.http_registry.get_flow_key()))
 
     async def _on_connect(self, ws):
         """Handle raw WebSocket connections."""
@@ -454,16 +499,21 @@ class ExtensionBridge:
             # loop thread; _route_response dedups and recovers as needed.
             if (req_id in self._pending or req_id in self._req_meta
                     or req_id in self._seen_ids):
-                self._loop.call_soon_threadsafe(
-                    self._resolve_pending, req_id, data
-                )
+                if self._loop is not None:
+                    self._loop.call_soon_threadsafe(self._resolve_pending, req_id, data)
                 return True
         if data.get("type") == "token_captured":
-            client_id = data.get("clientId") or next(iter(self._clients.keys()), None)
+            client_id = data.get("session_id") or data.get("sessionId") or data.get("clientId") or next(iter(self._clients.keys()), "__http__")
             if client_id:
                 self._tokens[client_id] = data.get("flowKey")
-                self._loop.call_soon_threadsafe(self._connected.set)
+                self._states[client_id] = "idle"
+                self.http_registry.hello(str(client_id), data.get("flowKey"), self._callback_secret)
+                if self._loop is not None:
+                    self._loop.call_soon_threadsafe(self._connected.set)
             return True
+        if data.get("type") in ("extension_ready", "ping", "media_urls_refresh"):
+            session_id = data.get("session_id") or data.get("sessionId")
+            return bool(session_id and self.http_registry.touch(str(session_id)))
         return False
 
     def _get_global_lock(self):
@@ -689,9 +739,15 @@ class ExtensionBridge:
 
         # Bind to 0.0.0.0 to enable callback routing from different devices
         server = HTTPServer(("0.0.0.0", HTTP_PORT), Handler)
+        self._http_server = server
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
 
     async def close(self):
-        self._ws_server.close()
-        await self._ws_server.wait_closed()
+        if self._http_server is not None:
+            self._http_server.shutdown()
+            self._http_server.server_close()
+            self._http_server = None
+        if self._ws_server is not None:
+            self._ws_server.close()
+            await self._ws_server.wait_closed()

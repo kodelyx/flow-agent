@@ -1,10 +1,11 @@
 from fastapi.testclient import TestClient
 
-import cli.api as api
+from flow_server.app import app
+from flow_server import state
 
 
 def test_hello_and_poll_roundtrip():
-    with TestClient(api.app) as client:
+    with TestClient(app) as client:
         r = client.post("/api/ext/hello", json={
             "session_id": "s-test",
             "flowKeyPresent": True,
@@ -18,8 +19,8 @@ def test_hello_and_poll_roundtrip():
         assert secret
         assert body["callback_url"].endswith("/api/ext/callback")
         assert body["poll_url"].endswith("/api/ext/poll")
-        assert api.bridge is not None
-        api.bridge.enqueue_http_command({"id": "c1", "method": "get_status", "params": {}})
+        assert state.get_bridge() is not None
+        state.get_bridge().enqueue_http_command({"id": "c1", "method": "get_status", "params": {}})
         p = client.get(
             "/api/ext/poll",
             params={"session_id": "s-test"},
@@ -30,7 +31,7 @@ def test_hello_and_poll_roundtrip():
 
 
 def test_poll_requires_authorization():
-    with TestClient(api.app) as client:
+    with TestClient(app) as client:
         r = client.post("/api/ext/hello", json={
             "session_id": "s-auth",
             "flowKey": "tok",
@@ -41,7 +42,7 @@ def test_poll_requires_authorization():
 
 
 def test_health_reports_http_transport():
-    with TestClient(api.app) as client:
+    with TestClient(app) as client:
         r = client.post("/api/ext/hello", json={
             "session_id": "s-health",
             "flowKeyPresent": True,

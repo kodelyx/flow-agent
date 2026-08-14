@@ -5,26 +5,37 @@
  * Captures bearer token, solves reCAPTCHA, proxies API calls through browser.
  */
 
-const AGENT_BASE = 'http://127.0.0.1:8001';
-const AGENT_WS_URL = 'ws://127.0.0.1:8001/ws';
-const AGENT_HELLO_URL = `${AGENT_BASE}/api/ext/hello`;
-const AGENT_POLL_URL = `${AGENT_BASE}/api/ext/poll`;
-const AGENT_CALLBACK_URL = `${AGENT_BASE}/api/ext/callback`;
-const TRANSPORT_MODE = 'auto'; // auto | http | ws
-let callbackUrl = AGENT_CALLBACK_URL;
+importScripts('config.js');
+
+let callbackUrl = 'http://127.0.0.1:3001/api/ext/callback';
 // NOTE: This is a browser-restricted public API key — safe to ship in extension bundles.
 const API_KEY = 'AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY';
 
 let ws = null;
 let flowKey = null;
-let callbackSecret = null;  // Auth secret for HTTP callback / poll
-let httpSessionId = null;
+let callbackSecret = null;  // Auth secret for HTTP callback, received from server on WS connect
 let httpConnected = false;
 let httpPollTimer = null;
 let httpPollIntervalMs = 1000;
-let activeTransport = 'none'; // none | http | ws
 let state = 'off'; // off | idle | running
 let manualDisconnect = false;
+let extensionClientId = '';
+let connectedServerHost = CONFIG.DEFAULT_SERVER_HOST;
+
+function normalizeCallbackUrl(value) {
+  try {
+    const raw = String(value || '').trim();
+    const parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    const local = /^(localhost|127\.0\.0\.1|192\.168\.|10\.)/.test(parsed.hostname);
+    parsed.protocol = local ? 'http:' : 'https:';
+    parsed.pathname = '/api/ext/callback';
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return 'http://127.0.0.1:8001/api/ext/callback';
+  }
+}
 let metrics = {
   tokenCapturedAt: null,
   requestCount: 0,   // captcha-consuming requests only (gen image/video/upscale)
@@ -39,15 +50,15 @@ let metrics = {
 const _VISIBLE_TYPES = new Set(['GEN_IMG', 'GEN_VID', 'GEN_VID_REF', 'UPSCALE', 'TRACKING', 'URL_REFRESH']);
 
 function _classifyApiUrl(url) {
-  if (url.includes('uploadImage'))                     return 'UPLOAD';
-  if (url.includes('batchGenerateImages'))              return 'GEN_IMG';
-  if (url.includes('UpsampleVideo'))                   return 'UPSCALE';
-  if (url.includes('ReferenceImages'))                 return 'GEN_VID_REF';
-  if (url.includes('batchAsyncGenerateVideo'))          return 'GEN_VID';
-  if (url.includes('batchCheckAsync'))                  return 'POLL';
-  if (url.includes('upsampleImage'))                   return 'UPS_IMG';
-  if (url.includes('/media/'))                         return 'MEDIA';
-  if (url.includes('/credits'))                        return 'CREDITS';
+  if (url.includes('uploadImage')) return 'UPLOAD';
+  if (url.includes('batchGenerateImages')) return 'GEN_IMG';
+  if (url.includes('UpsampleVideo')) return 'UPSCALE';
+  if (url.includes('ReferenceImages')) return 'GEN_VID_REF';
+  if (url.includes('batchAsyncGenerateVideo')) return 'GEN_VID';
+  if (url.includes('batchCheckAsync')) return 'POLL';
+  if (url.includes('upsampleImage')) return 'UPS_IMG';
+  if (url.includes('/media/')) return 'MEDIA';
+  if (url.includes('/credits')) return 'CREDITS';
   return 'API';
 }
 
@@ -58,53 +69,66 @@ let requestLog = [];
 function addRequestLog(entry) {
   requestLog.unshift(entry);
   if (requestLog.length > 100) requestLog.pop();
+  chrome.storage.local.set({ requestLog }).catch(() => {});
   broadcastRequestLog();
 }
 
 function updateRequestLog(id, updates) {
   const entry = requestLog.find((e) => e.id === id);
   if (entry) Object.assign(entry, updates);
+  chrome.storage.local.set({ requestLog }).catch(() => {});
   broadcastRequestLog();
 }
 
 function broadcastRequestLog() {
-  chrome.runtime.sendMessage({ type: 'REQUEST_LOG_UPDATE', log: requestLog }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'REQUEST_LOG_UPDATE', log: requestLog }).catch(() => { });
 }
 
 // ─── Startup ────────────────────────────────────────────────
 
-chrome.runtime.onInstalled.addListener(init);
-chrome.runtime.onStartup.addListener(init);
+let initialization;
+function ensureInitialized() {
+  if (!initialization) initialization = init().catch((error) => {
+    initialization = null;
+    console.error('[Flow Agent] Initialization failed:', error);
+  });
+  return initialization;
+}
+
+chrome.runtime.onInstalled.addListener(ensureInitialized);
+chrome.runtime.onStartup.addListener(ensureInitialized);
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'reconnect') connectToAgent();
   if (alarm.name === 'keepAlive') keepAlive();
   if (alarm.name === 'flushOutbox') flushOutbox();
-  if (alarm.name === 'http-poll') pollAgentCommands();
-  if (alarm.name === 'token-refresh') {
-    await captureTokenFromFlowTab();
-  }
+  if (alarm.name === 'closeIdleFlowTab') await closeIdleFlowTab();
 });
 
 async function init() {
-  const data = await chrome.storage.local.get([
-    'flowKey', 'metrics', 'callbackSecret', 'callbackUrl', 'httpSessionId',
-  ]);
+  if (chrome.sidePanel?.setPanelBehavior) {
+    try {
+      await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+    } catch (error) {
+      console.warn('[Flow Agent] Side Panel click behavior unavailable:', error.message);
+    }
+  }
+  await chrome.storage.local.remove('customServerIp');
+  const data = await chrome.storage.local.get(['flowKey', 'metrics', 'callbackSecret', 'callbackUrl', 'requestLog']);
   if (data.flowKey) flowKey = data.flowKey;
   if (data.metrics) Object.assign(metrics, data.metrics);
   if (data.callbackSecret) callbackSecret = data.callbackSecret;
-  if (data.callbackUrl) callbackUrl = data.callbackUrl;
-  if (data.httpSessionId) httpSessionId = data.httpSessionId;
-  if (!httpSessionId) {
-    httpSessionId = crypto.randomUUID();
-    chrome.storage.local.set({ httpSessionId });
-  }
+  if (data.callbackUrl) callbackUrl = normalizeCallbackUrl(data.callbackUrl);
+  if (Array.isArray(data.requestLog)) requestLog = data.requestLog.slice(0, 100);
   await loadOutbox();
   connectToAgent();
-  chrome.alarms.create('keepAlive', { periodInMinutes: 0.4 });
+  // 0.5 min is Chrome's minimum alarm period — anything lower is silently clamped.
+  chrome.alarms.create('keepAlive', { periodInMinutes: 0.5 });
   // Retry any responses left undelivered by a previous worker lifetime.
-  chrome.alarms.create('flushOutbox', { periodInMinutes: 0.25 });
+  chrome.alarms.create('flushOutbox', { periodInMinutes: 0.5 });
   flushOutbox();
 }
+
+ensureInitialized();
 
 // ─── Token Capture ──────────────────────────────────────────
 
@@ -126,8 +150,8 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     chrome.storage.local.set({ flowKey, metrics });
     console.log('[Flow Agent] Bearer token captured');
 
-    // Notify agent (HTTP callback preferred; WS fallback)
-    sendToAgent({ type: 'token_captured', flowKey, session_id: httpSessionId });
+    // Notify whichever transport is active.
+    sendToAgent({ type: 'token_captured', flowKey, clientId: extensionClientId });
   },
   { urls: ['https://aisandbox-pa.googleapis.com/*', 'https://labs.google/*'] },
   ['requestHeaders', 'extraHeaders'],
@@ -135,307 +159,294 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 
 let _openingFlowTab = false;
 
-async function captureTokenFromFlowTab() {
-  const tabs = await chrome.tabs.query({
-    url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
-  });
-  if (!tabs.length) {
-    if (_openingFlowTab) {
-      console.log('[Flow Agent] Flow tab already opening, skipping');
-      return;
-    }
-    _openingFlowTab = true;
-    try {
-      console.log('[Flow Agent] No Flow tab found — opening one in background');
-      await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow', active: false });
-      await sleep(3000);
-      const retryTabs = await chrome.tabs.query({
-        url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
-      });
-      if (!retryTabs.length) {
-        console.log('[Flow Agent] Flow tab not ready yet after open');
-        return;
-      }
-      await chrome.scripting.executeScript({
-        target: { tabId: retryTabs[0].id },
-        files: ['content.js'],
-      });
-      console.log('[Flow Agent] Token refresh triggered on newly opened Flow tab');
-    } catch (e) {
-      console.error('[Flow Agent] Token refresh failed after opening tab:', e);
-    } finally {
-      _openingFlowTab = false;
-    }
+// ─── On-demand tab lifecycle ────────────────────────────────
+// Open the Flow tab only when real work needs it (token capture or captcha).
+// Keep it available in the background so user tabs are never redirected.
+const FLOW_TAB_URLS = ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'];
+const FLOW_URL = 'https://labs.google/fx/tools/flow';
+let workTabId = null;
+let flowTabOpening = null;
+let workTabCreatedByExtension = false;
+
+function scheduleFlowTabClose() {
+  if (workTabCreatedByExtension) {
+    chrome.alarms.create('closeIdleFlowTab', { delayInMinutes: 2 });
+  }
+}
+
+async function closeIdleFlowTab() {
+  if (!workTabId || !workTabCreatedByExtension) return;
+  if (state === 'running') {
+    scheduleFlowTabClose();
     return;
   }
+  const tabId = workTabId;
+  workTabId = null;
+  workTabCreatedByExtension = false;
   try {
+    await chrome.tabs.remove(tabId);
+  } catch { /* tab was already closed */ }
+}
+
+function isFlowUrl(url) {
+  return !!url && FLOW_TAB_URLS.some((p) => new RegExp(p.replace(/\./g, '\\.').replace(/\*/g, '.*')).test(url));
+}
+
+// Finds/wakes/creates the Flow tab. Returns
+// the tab, or null if it couldn't be opened.
+async function _getOrOpenFlowTab() {
+  if (workTabId) {
+    try {
+      let tab = await chrome.tabs.get(workTabId);
+      if (tab && !isFlowUrl(tab.url)) {
+        await chrome.tabs.update(workTabId, { url: FLOW_URL });
+        await sleep(3000);
+        tab = await chrome.tabs.get(workTabId);
+      }
+      scheduleFlowTabClose();
+      return tab;
+    } catch (e) {
+      workTabId = null; // closed by the user — fall through and open fresh
+    }
+  }
+
+  const tabs = await chrome.tabs.query({ url: FLOW_TAB_URLS });
+  if (tabs.length) {
+    workTabId = tabs[0].id;
+    workTabCreatedByExtension = false;
+    return tabs[0];
+  }
+
+  const createdTab = await chrome.tabs.create({ url: FLOW_URL, active: false });
+  workTabId = createdTab.id;
+  workTabCreatedByExtension = true;
+  await sleep(3000);
+  const retryTabs = await chrome.tabs.query({ url: FLOW_TAB_URLS });
+  if (!retryTabs.length) return null;
+  workTabId = retryTabs[0].id;
+  scheduleFlowTabClose();
+  return retryTabs[0];
+}
+
+async function getOrOpenFlowTab() {
+  if (flowTabOpening) return flowTabOpening;
+  flowTabOpening = _getOrOpenFlowTab();
+  try {
+    return await flowTabOpening;
+  } finally {
+    flowTabOpening = null;
+  }
+}
+
+// Token is considered fresh if it exists and was captured less than 50 minutes ago.
+// Google OAuth tokens expire after ~60 min, so 50 min gives a safe buffer.
+function isTokenFresh() {
+  if (!flowKey || !metrics.tokenCapturedAt) return false;
+  const ageMs = Date.now() - metrics.tokenCapturedAt;
+  return ageMs < 50 * 60 * 1000; // 50 minutes
+}
+
+async function captureTokenFromFlowTab() {
+  // Skip if token is still fresh — no need to open/refresh anything
+  if (isTokenFresh()) {
+    console.log('[Flow Agent] Token still fresh, skipping tab refresh');
+    return;
+  }
+
+  if (_openingFlowTab) {
+    console.log('[Flow Agent] Flow tab already opening, skipping');
+    return;
+  }
+  _openingFlowTab = true;
+  try {
+    const tab = await getOrOpenFlowTab();
+    if (!tab) {
+      console.log('[Flow Agent] Flow tab not ready yet after open');
+      return;
+    }
     await chrome.scripting.executeScript({
-      target: { tabId: tabs[0].id },
+      target: { tabId: tab.id },
       files: ['content.js'],
     });
     console.log('[Flow Agent] Token refresh triggered on Flow tab');
   } catch (e) {
     console.error('[Flow Agent] Token refresh failed:', e);
+  } finally {
+    _openingFlowTab = false;
   }
 }
 
-// ─── Agent Transport (HTTP preferred, WS fallback) ──────────
 
-function isAgentConnected() {
-  return httpConnected || ws?.readyState === WebSocket.OPEN;
-}
-
-async function ensureSessionId() {
-  if (httpSessionId) return httpSessionId;
-  const data = await chrome.storage.local.get(['httpSessionId']);
-  httpSessionId = data.httpSessionId || crypto.randomUUID();
-  await chrome.storage.local.set({ httpSessionId });
-  return httpSessionId;
-}
-
-async function connectViaHttp() {
-  if (manualDisconnect) return false;
-  try {
-    const sessionId = await ensureSessionId();
-    const resp = await fetch(AGENT_HELLO_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: 'hello',
-        session_id: sessionId,
-        extension_version: chrome.runtime.getManifest().version,
-        flowKeyPresent: !!flowKey,
-        flowKey: flowKey || undefined,
-        capabilities: ['api_request', 'trpc_request', 'upload_video', 'solve_captcha', 'get_status'],
-      }),
-    });
-    if (!resp.ok) {
-      console.warn('[Flow Agent] HTTP hello failed:', resp.status);
-      return false;
-    }
-    const body = await resp.json();
-    if (!body?.ok) return false;
-
-    callbackSecret = body.secret || callbackSecret;
-    callbackUrl = body.callback_url || AGENT_CALLBACK_URL;
-    httpPollIntervalMs = Number(body.poll_interval_ms) || 1000;
-    httpConnected = true;
-    activeTransport = 'http';
-    chrome.storage.local.set({
-      callbackSecret,
-      callbackUrl,
-      httpSessionId: sessionId,
-    });
-
-    chrome.alarms.clear('reconnect');
-    chrome.alarms.create('token-refresh', { periodInMinutes: 45 });
-    // MV3 SW may sleep; alarm + soft timer both keep polling alive.
-    chrome.alarms.create('http-poll', { periodInMinutes: Math.max(0.05, httpPollIntervalMs / 60000) });
-    scheduleHttpPoll();
-    setState('idle');
-    console.log('[Flow Agent] Connected to agent via HTTP');
-
-    await sendToAgent({
-      type: 'extension_ready',
-      flowKeyPresent: !!flowKey,
-      session_id: sessionId,
-      tokenAge: flowKey && metrics.tokenCapturedAt ? Date.now() - metrics.tokenCapturedAt : null,
-    });
-    if (flowKey) {
-      await sendToAgent({ type: 'token_captured', flowKey, session_id: sessionId });
-    }
-    flushOutbox();
-    return true;
-  } catch (e) {
-    console.warn('[Flow Agent] HTTP connect error:', e);
-    httpConnected = false;
-    if (activeTransport === 'http') activeTransport = 'none';
-    return false;
-  }
-}
-
-function scheduleHttpPoll() {
-  if (httpPollTimer) clearTimeout(httpPollTimer);
-  if (!httpConnected || manualDisconnect) return;
-  httpPollTimer = setTimeout(() => {
-    pollAgentCommands().finally(scheduleHttpPoll);
-  }, httpPollIntervalMs);
-}
-
-async function pollAgentCommands() {
-  if (manualDisconnect || !httpConnected) return;
-  try {
-    const sessionId = await ensureSessionId();
-    const headers = {};
-    if (callbackSecret) headers.Authorization = `Bearer ${callbackSecret}`;
-    const resp = await fetch(
-      `${AGENT_POLL_URL}?session_id=${encodeURIComponent(sessionId)}`,
-      { method: 'GET', headers },
-    );
-    if (resp.status === 401 || resp.status === 403 || resp.status === 404) {
-      httpConnected = false;
-      activeTransport = ws?.readyState === WebSocket.OPEN ? 'ws' : 'none';
-      return;
-    }
-    if (!resp.ok) return;
-    const body = await resp.json();
-    httpConnected = true;
-    activeTransport = 'http';
-    const commands = Array.isArray(body?.commands) ? body.commands : [];
-    for (const cmd of commands) {
-      await handleAgentMessage(cmd);
-    }
-  } catch (e) {
-    // Transient network error — keep session; next poll/hello will recover.
-    console.debug('[Flow Agent] HTTP poll error:', e);
-  }
-}
-
-async function handleAgentMessage(msg) {
-  try {
-    if (msg.method === 'api_request') {
-      await handleApiRequest(msg);
-    } else if (msg.method === 'trpc_request') {
-      await handleTrpcRequest(msg);
-    } else if (msg.method === 'upload_video') {
-      await handleUploadVideo(msg);
-    } else if (msg.method === 'solve_captcha') {
-      await handleSolveCaptcha(msg);
-    } else if (msg.method === 'get_status') {
-      sendToAgent({
-        id: msg.id,
-        result: {
-          state,
-          flowKeyPresent: !!flowKey,
-          manualDisconnect,
-          transport: activeTransport,
-          httpConnected,
-          tokenAge: metrics.tokenCapturedAt ? Date.now() - metrics.tokenCapturedAt : null,
-          metrics,
-        },
-      });
-    } else if (msg.method === 'open_flow_tab') {
-      console.log('[Flow Agent] Agent requested: open Flow tab');
-      const tabs = await chrome.tabs.query({
-        url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
-      });
-      if (tabs.length) {
-        await chrome.tabs.reload(tabs[0].id);
-        console.log('[Flow Agent] Refreshed existing Flow tab');
-      } else {
-        await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow', active: true });
-        console.log('[Flow Agent] Opened new Flow tab');
-      }
-      await sleep(5000);
-      if (flowKey) {
-        sendToAgent({ type: 'token_captured', flowKey, session_id: httpSessionId });
-        console.log('[Flow Agent] Sent stored token after tab open');
-      } else {
-        const data = await chrome.storage.local.get(['flowKey']);
-        if (data.flowKey) {
-          flowKey = data.flowKey;
-          sendToAgent({ type: 'token_captured', flowKey, session_id: httpSessionId });
-          console.log('[Flow Agent] Sent token from storage after tab open');
-        }
-      }
-    } else if (msg.method === 'refresh_flow_tab') {
-      console.log('[Flow Agent] Agent requested: refresh token');
-      await captureTokenFromFlowTab();
-      await sleep(3000);
-      if (flowKey) {
-        sendToAgent({ type: 'token_captured', flowKey, session_id: httpSessionId });
-        console.log('[Flow Agent] Sent token after refresh');
-      } else {
-        const data = await chrome.storage.local.get(['flowKey']);
-        if (data.flowKey) {
-          flowKey = data.flowKey;
-          sendToAgent({ type: 'token_captured', flowKey, session_id: httpSessionId });
-          console.log('[Flow Agent] Sent token from storage after refresh');
-        }
-      }
-    } else if (msg.type === 'callback_config') {
-      callbackSecret = msg.secret;
-      callbackUrl = msg.callback_url || AGENT_CALLBACK_URL;
-      chrome.storage.local.set({ callbackSecret: msg.secret, callbackUrl });
-      console.log('[Flow Agent] Received callback config:', callbackUrl);
-    } else if (msg.type === 'callback_secret') {
-      callbackSecret = msg.secret;
-      chrome.storage.local.set({ callbackSecret: msg.secret });
-      console.log('[Flow Agent] Received callback secret');
-    } else if (msg.type === 'pong') {
-      // keepalive response
-    }
-  } catch (e) {
-    console.error('[Flow Agent] Message error:', e);
-  }
-}
+// ─── WebSocket to Agent ─────────────────────────────────────
 
 async function connectToAgent() {
   if (manualDisconnect) return;
-
-  if (TRANSPORT_MODE === 'http' || TRANSPORT_MODE === 'auto') {
-    const ok = await connectViaHttp();
-    if (ok) {
-      // HTTP success: do not force WS in auto mode.
-      if (TRANSPORT_MODE === 'auto') return;
-    } else if (TRANSPORT_MODE === 'http') {
-      scheduleReconnect();
-      return;
-    }
-  }
-
-  if (TRANSPORT_MODE === 'ws' || TRANSPORT_MODE === 'auto') {
-    connectViaWebSocket();
-  }
-}
-
-function connectViaWebSocket() {
-  if (manualDisconnect) return;
+  await connectHttpAgent();
   if (ws?.readyState === WebSocket.CONNECTING) return;
   if (ws?.readyState === WebSocket.OPEN) return;
 
+  const data = await chrome.storage.local.get(['clientId']);
+  const serverIp = CONFIG.DEFAULT_SERVER_HOST;
+  connectedServerHost = serverIp;
+  const isLocal = /^(127\.0\.0\.1|localhost|192\.168\.|10\.)/.test(serverIp);
+  const wsScheme = isLocal ? 'ws' : 'wss';
+  const httpScheme = isLocal ? 'http' : 'https';
+  const wsUrl = `${wsScheme}://${serverIp}/ws`;
+
+  // Dynamically resolve callbackUrl
+  callbackUrl = `${httpScheme}://${serverIp}/api/ext/callback`;
+
   try {
-    ws = new WebSocket(AGENT_WS_URL);
+    ws = new WebSocket(wsUrl);
   } catch (e) {
     console.error('[Flow Agent] WS connect error:', e);
     scheduleReconnect();
     return;
   }
 
-  ws.onopen = () => {
-    console.log('[Flow Agent] Connected to agent via WebSocket');
-    if (!httpConnected) activeTransport = 'ws';
+  ws.onopen = async () => {
+    console.log('[Flow Agent] Connected to agent: ' + wsUrl);
     chrome.alarms.clear('reconnect');
     setState('idle');
-    chrome.alarms.create('token-refresh', { periodInMinutes: 45 });
 
+    const storage = await chrome.storage.local.get(['clientId']);
+    let clientId = storage.clientId;
+    if (!clientId) {
+      const prefix = CONFIG.DEFAULT_CLIENT_ID_PREFIX || 'client';
+      clientId = `${prefix}-${Math.random().toString(36).substring(2, 8)}`;
+      await chrome.storage.local.set({ clientId });
+    }
+    extensionClientId = clientId;
+
+    // Send current state + resend token if we have one, along with clientId
     ws.send(JSON.stringify({
       type: 'extension_ready',
+      clientId: clientId,
       flowKeyPresent: !!flowKey,
       tokenAge: flowKey && metrics.tokenCapturedAt ? Date.now() - metrics.tokenCapturedAt : null,
     }));
     if (flowKey) {
-      ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+      ws.send(JSON.stringify({
+        type: 'token_captured',
+        clientId: clientId,
+        flowKey: flowKey
+      }));
     }
+    // Backend is reachable again — push any responses queued while it was down.
     flushOutbox();
   };
 
   ws.onmessage = async ({ data }) => {
     try {
       const msg = JSON.parse(data);
-      await handleAgentMessage(msg);
+
+      if (msg.method === 'api_request') {
+        await handleApiRequest(msg);
+      } else if (msg.method === 'trpc_request') {
+        await handleTrpcRequest(msg);
+      } else if (msg.method === 'upload_video') {
+        await handleUploadVideo(msg);
+      } else if (msg.method === 'solve_captcha') {
+        await handleSolveCaptcha(msg);
+      } else if (msg.method === 'get_status') {
+        sendToAgent({
+          id: msg.id,
+          result: {
+            state,
+            flowKeyPresent: !!flowKey,
+            manualDisconnect,
+            tokenAge: metrics.tokenCapturedAt ? Date.now() - metrics.tokenCapturedAt : null,
+            metrics,
+          },
+        });
+      } else if (msg.method === 'open_flow_tab') {
+        // Python bridge asks us to open/focus a Flow tab
+        // If token is still fresh, just send it back — no need to open/reload
+        if (isTokenFresh()) {
+          console.log('[Flow Agent] open_flow_tab: token fresh, sending cached token');
+          sendToAgent({ type: 'token_captured', flowKey, clientId: extensionClientId });
+        } else {
+          console.log('[Flow Agent] open_flow_tab: token missing/expired, opening tab');
+          const tabs = await chrome.tabs.query({
+            url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
+          });
+          if (tabs.length) {
+            await chrome.tabs.reload(tabs[0].id);
+            console.log('[Flow Agent] Refreshed existing Flow tab');
+          } else {
+            await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow', active: true });
+            console.log('[Flow Agent] Opened new Flow tab');
+          }
+          await sleep(5000);
+          if (flowKey && ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+            console.log('[Flow Agent] Sent token after tab open');
+          } else {
+            const data = await chrome.storage.local.get(['flowKey']);
+            if (data.flowKey) {
+              flowKey = data.flowKey;
+              if (ws?.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+                console.log('[Flow Agent] Sent token from storage after tab open');
+              }
+            }
+          }
+        }
+      } else if (msg.method === 'refresh_flow_tab' || msg.method === 'force_refresh') {
+        // Python bridge asks us to refresh token.
+        // force_refresh (or an explicit msg.force) bypasses the freshness check:
+        // Google can invalidate a token via inactivity long before its 50-min
+        // age limit, so a "fresh" token may still be dead (401). In that case we
+        // must actually reload the tab and re-capture, not resend the cached one.
+        const force = msg.force === true || msg.method === 'force_refresh';
+        if (isTokenFresh() && !force) {
+          console.log('[Flow Agent] refresh_flow_tab: token fresh, sending cached token');
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+          }
+        } else {
+          console.log('[Flow Agent] refresh_flow_tab: forcing tab reload + re-capture');
+          // Drop the stale token so captureTokenFromFlowTab can't short-circuit.
+          if (force) {
+            flowKey = null;
+            metrics.tokenCapturedAt = null;
+          }
+          await captureTokenFromFlowTab();
+          await sleep(3000);
+          if (flowKey && ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+            console.log('[Flow Agent] Sent token after refresh');
+          } else {
+            const data = await chrome.storage.local.get(['flowKey']);
+            if (data.flowKey) {
+              flowKey = data.flowKey;
+              if (ws?.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
+                console.log('[Flow Agent] Sent token from storage after refresh');
+              }
+            }
+          }
+        }
+      } else if (msg.type === 'callback_config') {
+        callbackSecret = msg.secret;
+        callbackUrl = normalizeCallbackUrl(msg.callback_url);
+        chrome.storage.local.set({ callbackSecret: msg.secret, callbackUrl });
+        console.log('[Flow Agent] Received callback config:', callbackUrl);
+      } else if (msg.type === 'callback_secret') {
+        callbackSecret = msg.secret;
+        chrome.storage.local.set({ callbackSecret: msg.secret });
+        console.log('[Flow Agent] Received callback secret');
+      } else if (msg.type === 'pong') {
+        // keepalive response
+      }
     } catch (e) {
       console.error('[Flow Agent] Message error:', e);
     }
   };
 
   ws.onclose = () => {
-    if (activeTransport === 'ws') {
-      setState(httpConnected ? 'idle' : 'off');
-      activeTransport = httpConnected ? 'http' : 'none';
-    }
-    chrome.alarms.clear('token-refresh');
-    if (!manualDisconnect && !httpConnected) scheduleReconnect();
+    setState('off');
+    if (!manualDisconnect) scheduleReconnect();
   };
 
   ws.onerror = (e) => {
@@ -445,57 +456,108 @@ function connectViaWebSocket() {
   };
 }
 
+function agentHttpBase() {
+  const host = String(connectedServerHost || CONFIG.DEFAULT_SERVER_HOST).trim().replace(/\/$/, '');
+  const hostWithoutScheme = host.replace(/^https?:\/\//i, '');
+  const local = /^(127\.0\.0\.1|localhost|192\.168\.|10\.)(:|$)/.test(hostWithoutScheme);
+  return /^https?:\/\//i.test(host) ? host : `${local ? 'http' : 'https'}://${host}`;
+}
+
+async function connectHttpAgent() {
+  if (manualDisconnect || httpConnected) return;
+  const storage = await chrome.storage.local.get(['clientId']);
+  let clientId = storage.clientId;
+  if (!clientId) {
+    const prefix = CONFIG.DEFAULT_CLIENT_ID_PREFIX || 'client';
+    clientId = `${prefix}-${Math.random().toString(36).substring(2, 8)}`;
+    await chrome.storage.local.set({ clientId });
+  }
+  extensionClientId = clientId;
+  connectedServerHost = CONFIG.DEFAULT_SERVER_HOST;
+  try {
+    const response = await fetch(`${agentHttpBase()}/api/ext/hello`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: clientId,
+        clientId,
+        flowKey,
+        flowKeyPresent: !!flowKey,
+        extension_version: chrome.runtime.getManifest().version,
+      }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    callbackSecret = data.secret;
+    callbackUrl = new URL(data.callback_url, agentHttpBase()).toString();
+    httpPollIntervalMs = Math.max(250, Number(data.poll_interval_ms) || 1000);
+    httpConnected = true;
+    await chrome.storage.local.set({ callbackSecret, callbackUrl });
+    setState('idle');
+    scheduleHttpPoll(0);
+    flushOutbox();
+  } catch (error) {
+    httpConnected = false;
+    console.warn('[Flow Agent] HTTP bridge unavailable; using WebSocket fallback:', error.message);
+  }
+}
+
+function scheduleHttpPoll(delay = httpPollIntervalMs) {
+  if (httpPollTimer) clearTimeout(httpPollTimer);
+  if (!httpConnected || manualDisconnect) return;
+  httpPollTimer = setTimeout(pollHttpCommands, delay);
+}
+
+async function pollHttpCommands() {
+  if (!httpConnected || manualDisconnect) return;
+  try {
+    const response = await fetch(`${agentHttpBase()}/api/ext/poll?session_id=${encodeURIComponent(extensionClientId)}`, {
+      headers: { Authorization: `Bearer ${callbackSecret}` },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    for (const command of data.commands || []) {
+      if (typeof ws?.onmessage === 'function') {
+        await ws.onmessage({ data: JSON.stringify(command) });
+      }
+    }
+    scheduleHttpPoll();
+  } catch (error) {
+    httpConnected = false;
+    console.warn('[Flow Agent] HTTP polling stopped:', error.message);
+    scheduleReconnect();
+  }
+}
+
 function scheduleReconnect() {
-  chrome.alarms.create('reconnect', { delayInMinutes: 0.083 }); // ~5s
+  chrome.alarms.create('reconnect', { delayInMinutes: 0.5 });
 }
 
 function keepAlive() {
   if (httpConnected) {
-    // Soft hello refresh keeps session last_seen fresh.
-    connectViaHttp().catch(() => {});
-    pollAgentCommands().catch(() => {});
-    return;
-  }
-  if (ws?.readyState === WebSocket.OPEN) {
+    connectHttpAgent();
+  } else if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'ping' }));
   } else {
     connectToAgent();
   }
 }
 
-async function sendToAgent(msg) {
+function sendToAgent(msg) {
   // API responses (with msg.id) go through a durable outbox so a generated
   // result is never lost — persisted and retried until the agent acks it.
   if (msg.id) {
     enqueueResponse(msg);
     return;
   }
-
-  const payload = { ...msg };
-  if (httpSessionId && !payload.session_id && !payload.sessionId) {
-    payload.session_id = httpSessionId;
-  }
-
-  // Prefer authenticated HTTP callback for control messages.
-  if (callbackSecret || httpConnected) {
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (callbackSecret) headers.Authorization = `Bearer ${callbackSecret}`;
-      const target = callbackUrl || AGENT_CALLBACK_URL;
-      const resp = await fetch(target, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-      });
-      if (resp.ok || resp.status === 404) return;
-    } catch (e) {
-      console.debug('[Flow Agent] HTTP send failed, falling back:', e);
-    }
-  }
-
-  // Non-response messages — best-effort over WS.
-  if (ws?.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(payload));
+  if (httpConnected && callbackSecret) {
+    fetch(callbackUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${callbackSecret}` },
+      body: JSON.stringify({ ...msg, session_id: extensionClientId }),
+    }).catch(() => {});
+  } else if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(msg));
   }
 }
 
@@ -512,11 +574,11 @@ async function loadOutbox() {
   try {
     const { responseOutbox } = await chrome.storage.local.get('responseOutbox');
     if (responseOutbox && typeof responseOutbox === 'object') outbox = responseOutbox;
-  } catch {}
+  } catch { }
 }
 
 function persistOutbox() {
-  chrome.storage.local.set({ responseOutbox: outbox }).catch(() => {});
+  chrome.storage.local.set({ responseOutbox: outbox }).catch(() => { });
 }
 
 function enqueueResponse(msg) {
@@ -527,17 +589,16 @@ function enqueueResponse(msg) {
 
 async function deliverOnce(entry) {
   try {
-    const headers = { 'Content-Type': 'application/json' };
-    if (callbackSecret) headers.Authorization = `Bearer ${callbackSecret}`;
-    const target = callbackUrl || AGENT_CALLBACK_URL;
-    const payload = { ...entry.msg };
-    if (httpSessionId && !payload.session_id && !payload.sessionId) {
-      payload.session_id = httpSessionId;
-    }
-    const resp = await fetch(target, {
+    const serverIp = connectedServerHost || CONFIG.DEFAULT_SERVER_HOST;
+    const targetCallbackUrl = normalizeCallbackUrl(serverIp);
+
+    const resp = await fetch(targetCallbackUrl, {
       method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
+      headers: {
+        'Content-Type': 'application/json',
+        ...(callbackSecret ? { Authorization: `Bearer ${callbackSecret}` } : {}),
+      },
+      body: JSON.stringify({ ...entry.msg, session_id: extensionClientId }),
     });
     // Any HTTP reply means the backend is reachable and has taken the response
     // (ok:true = matched a request, ok:false = unknown id / already handled).
@@ -549,7 +610,7 @@ async function deliverOnce(entry) {
     // Network error: backend unreachable. Try WS as an immediate fallback but
     // keep the entry queued so a later flush can still deliver it.
     if (ws?.readyState === WebSocket.OPEN) {
-      try { ws.send(JSON.stringify(entry.msg)); } catch {}
+      try { ws.send(JSON.stringify(entry.msg)); } catch { }
     }
     return false;
   }
@@ -618,33 +679,12 @@ async function requestCaptchaFromTab(tabId, requestId, pageAction) {
 }
 
 async function solveCaptcha(requestId, captchaAction) {
-  const tabs = await chrome.tabs.query({
-    url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
-  });
-
-  if (!tabs.length) {
-    // Auto-open Flow tab and wait briefly before returning error
-    try {
-      await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow', active: false });
-      await sleep(3000);
-      // Retry tab query after opening
-      const retryTabs = await chrome.tabs.query({
-        url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
-      });
-      if (!retryTabs.length) return { error: 'NO_FLOW_TAB' };
-      const resp = await Promise.race([
-        requestCaptchaFromTab(retryTabs[0].id, requestId, captchaAction),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('CAPTCHA_TIMEOUT')), 30000)),
-      ]);
-      return resp;
-    } catch (e) {
-      return { error: e.message || 'NO_FLOW_TAB' };
-    }
-  }
+  const tab = await getOrOpenFlowTab();
+  if (!tab) return { error: 'NO_FLOW_TAB' };
 
   try {
     const resp = await Promise.race([
-      requestCaptchaFromTab(tabs[0].id, requestId, captchaAction),
+      requestCaptchaFromTab(tab.id, requestId, captchaAction),
       new Promise((_, rej) => setTimeout(() => rej(new Error('CAPTCHA_TIMEOUT')), 30000)),
     ]);
     return resp;
@@ -682,11 +722,7 @@ async function handleTrpcRequest(msg) {
   }
 
   setState('running');
-  // TRPC calls don't consume captcha — don't count in metrics
-
-  const logId = id;
-  const logType = url.includes('createProject') ? 'CREATE_PROJECT' : 'TRPC';
-  // TRPC calls are silent — don't show in request log
+  // TRPC calls don't consume captcha and are silent — no metrics, no request log.
 
   const fetchHeaders = { 'Content-Type': 'application/json', ...headers };
   if (flowKey) {
@@ -701,13 +737,9 @@ async function handleTrpcRequest(msg) {
       credentials: 'include',
     });
     const data = await resp.json();
-    chrome.storage.local.set({ metrics });
-    updateRequestLog(logId, { status: 'success' });
     sendToAgent({ id, status: resp.status, data });
   } catch (e) {
     console.error('[Flow Agent] tRPC request failed:', e);
-    chrome.storage.local.set({ metrics });
-    updateRequestLog(logId, { status: 'failed', error: e.message || 'TRPC_FETCH_FAILED' });
     sendToAgent({ id, error: e.message || 'TRPC_FETCH_FAILED' });
   } finally {
     setState('idle');
@@ -864,6 +896,17 @@ async function handleApiRequest(msg) {
       responseData = responseText;
     }
 
+    // Self-heal: a 401 means Google invalidated our cached token (usually via
+    // inactivity, before our 50-min freshness window). Drop it so the very next
+    // request / refresh forces a genuine tab reload + re-capture instead of
+    // resending the same dead token.
+    if (response.status === 401) {
+      console.warn('[Flow Agent] 401 UNAUTHENTICATED — invalidating cached token to force refresh');
+      flowKey = null;
+      metrics.tokenCapturedAt = null;
+      chrome.storage.local.set({ flowKey: null });
+    }
+
     sendToAgent({
       id,
       status: response.status,
@@ -904,16 +947,25 @@ function setState(newState) {
 }
 
 function broadcastStatus() {
-  chrome.runtime.sendMessage({ type: 'STATUS_PUSH' }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'STATUS_PUSH' }).catch(() => { });
 }
 
 chrome.runtime.onMessage.addListener((msg, _, reply) => {
+  if (msg.type === 'SETTINGS_UPDATED') {
+    if (ws) {
+      try { ws.close(); } catch { }
+    }
+    connectToAgent();
+    reply({ ok: true });
+    return true;
+  }
+
   if (msg.type === 'STATUS') {
     reply({
-      connected: isAgentConnected(),
-      agentConnected: isAgentConnected(),
-      transport: activeTransport,
+      connected: httpConnected || ws?.readyState === WebSocket.OPEN,
+      agentConnected: httpConnected || ws?.readyState === WebSocket.OPEN,
       httpConnected,
+      transport: httpConnected ? 'http' : (ws?.readyState === WebSocket.OPEN ? 'ws' : 'none'),
       flowKeyPresent: !!flowKey,
       manualDisconnect,
       tokenAge: metrics.tokenCapturedAt ? Date.now() - metrics.tokenCapturedAt : null,
@@ -924,18 +976,14 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
         lastError: metrics.lastError,
       },
       state,
+      clientId: extensionClientId,
     });
   }
 
   if (msg.type === 'DISCONNECT') {
     manualDisconnect = true;
     httpConnected = false;
-    activeTransport = 'none';
-    if (httpPollTimer) {
-      clearTimeout(httpPollTimer);
-      httpPollTimer = null;
-    }
-    chrome.alarms.clear('http-poll');
+    if (httpPollTimer) clearTimeout(httpPollTimer);
     if (ws) ws.close();
     reply({ ok: true });
     return true;
@@ -950,6 +998,49 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
 
   if (msg.type === 'REQUEST_LOG') {
     reply({ log: requestLog });
+    return true;
+  }
+
+  if (msg.type === 'GET_CLIENT_CREDITS') {
+    const host = String(connectedServerHost || CONFIG.DEFAULT_SERVER_HOST).trim().replace(/\/$/, '');
+    const hostWithoutScheme = host.replace(/^https?:\/\//i, '');
+    const local = /^(127\.0\.0\.1|localhost|192\.168\.|10\.)(:|$)/.test(hostWithoutScheme);
+    const base = /^https?:\/\//i.test(host) ? host : `${local ? 'http' : 'https'}://${host}`;
+    chrome.storage.local.get(['clientId']).then(({ clientId }) => fetch(`${base}/v1/credits`, {
+      headers: (extensionClientId || clientId) ? { 'X-Client-Id': extensionClientId || clientId } : {},
+    }))
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+        reply(data);
+      })
+      .catch((error) => {
+        console.error('[Flow Agent] Credit request failed:', error);
+        reply({ error: error.message });
+      });
+    return true;
+  }
+
+  if (msg.type === 'CLEAR_REQUEST_LOG') {
+    requestLog = [];
+    chrome.storage.local.remove('requestLog').then(() => {
+      broadcastRequestLog();
+      reply({ ok: true });
+    });
+    return true;
+  }
+
+  if (msg.type === 'ADD_HISTORY') {
+    addRequestLog({
+      id: msg.entry?.id || `popup-${Date.now()}`,
+      time: msg.entry?.time || new Date().toISOString(),
+      type: msg.entry?.type || 'GEN_IMG',
+      status: msg.entry?.status || 'success',
+      url: msg.entry?.url || '',
+      payloadSummary: msg.entry?.prompt || '',
+      responseSummary: msg.entry?.url ? 'Generated result ready' : 'Generation completed',
+    });
+    reply({ ok: true });
     return true;
   }
 
@@ -985,28 +1076,6 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
 
   if (msg.type === 'TRPC_MEDIA_URLS') {
     handleTrpcMediaUrls(msg.trpcUrl, msg.body);
-    reply({ ok: true });
-    return true;
-  }
-
-  if (msg.type === 'SNIFFED_AISANDBOX_REQUEST') {
-    console.log('[Flow Agent] SNIFFED aisandbox request:', msg.url);
-    {
-      const headers = { 'Content-Type': 'application/json' };
-      if (callbackSecret) headers.Authorization = `Bearer ${callbackSecret}`;
-      fetch((callbackUrl || AGENT_CALLBACK_URL), {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          type: 'sniffed_video_request',
-          url: msg.url,
-          method: msg.method,
-          payload: msg.payload,
-          timestamp: msg.timestamp,
-          session_id: httpSessionId,
-        }),
-      }).catch((e) => console.error('[Flow Agent] Failed to forward sniffed request:', e));
-    }
     reply({ ok: true });
     return true;
   }
@@ -1140,7 +1209,7 @@ async function sendTelemetry() {
         body: JSON.stringify(_buildFrontendEventsPayload()),
       });
     }
-  } catch {}
+  } catch { }
 }
 
 // Send telemetry at random intervals (45-120s) to look organic

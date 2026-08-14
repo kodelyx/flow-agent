@@ -1,6 +1,6 @@
 # flow-agent/tests/test_http_bridge.py
 import time
-from omniflash.http_bridge import ExtensionHttpRegistry
+from flow_engine.http_bridge import ExtensionHttpRegistry
 
 
 def test_hello_registers_session_and_accepts_token():

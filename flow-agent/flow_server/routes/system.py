@@ -10,7 +10,8 @@ import asyncio
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends, Header, WebSocket
+from fastapi import APIRouter, HTTPException, Depends, Header, WebSocket, Request, Query
+from fastapi.responses import JSONResponse
 
 from flow_server import state
 from flow_server.state import verify_api_key, get_active_bridge
@@ -33,13 +34,49 @@ async def websocket_endpoint(websocket: WebSocket):
         log.error("Bridge not initialized")
         await websocket.close()
 
+@router.post("/api/ext/hello")
+async def extension_hello(body: dict):
+    bridge = state.get_bridge()
+    if not bridge:
+        return JSONResponse(status_code=503, content={"ok": False})
+    session_id = body.get("session_id") or body.get("sessionId")
+    if not session_id:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "session_id required"})
+    flow_key = body.get("flowKey") or body.get("flow_key")
+    result = bridge.register_http_session(str(session_id), flow_key, secret=bridge._callback_secret)
+    poll_interval_ms = int(__import__("os").environ.get("EXT_POLL_INTERVAL_MS", "1000"))
+    return {"ok": True, "session_id": result["session_id"], "secret": result["secret"],
+            "callback_url": "/api/ext/callback", "poll_url": "/api/ext/poll",
+            "poll_interval_ms": poll_interval_ms, "events_url": "/api/ext/events"}
+
+
+@router.get("/api/ext/poll")
+async def extension_poll(request: Request, session_id: str = Query(...)):
+    bridge = state.get_bridge()
+    if not bridge:
+        return JSONResponse(status_code=503, content={"ok": False, "commands": []})
+    authorization = request.headers.get("Authorization")
+    if authorization is None:
+        return JSONResponse(status_code=401, content={"ok": False, "commands": []})
+    if not bridge.verify_http_session_authorization(session_id, authorization):
+        return JSONResponse(status_code=403, content={"ok": False, "commands": []})
+    result = bridge.poll_http_commands(session_id)
+    return JSONResponse(status_code=200 if result.get("ok") else 404, content=result)
+
+
 @router.post("/api/ext/callback")
-async def http_callback(body: dict):
+async def http_callback(request: Request, body: dict):
     bridge = state.get_bridge()
     if bridge:
+        authorization = request.headers.get("Authorization")
+        session_id = body.get("session_id") or body.get("sessionId")
+        if not bridge.verify_callback_authorization(authorization) and not (
+            session_id and bridge.verify_http_session_authorization(str(session_id), authorization)
+        ):
+            return JSONResponse(status_code=403, content={"ok": False})
         success = bridge.handle_http_callback(body)
-        return {"ok": success}
-    return {"ok": False}
+        return JSONResponse(status_code=200 if success else 404, content={"ok": bool(success)})
+    return JSONResponse(status_code=503, content={"ok": False})
 
 
 # OpenAI Endpoints
@@ -148,9 +185,10 @@ async def root():
 async def health():
     bridge = state.get_bridge()
     if not bridge:
-        return {"status": "starting", "connected": False}
+        return {"status": "starting", "connected": False, "transport": "none"}
     return {
         "status": "healthy" if await bridge.health_check() else "unauthorized_or_disconnected",
-        "extension_connected": bridge._ws is not None,
-        "has_flow_key": bridge._flow_key is not None
+        "extension_connected": bridge.is_extension_connected(),
+        "has_flow_key": bridge.has_flow_key(),
+        "transport": bridge.active_transport(),
     }
