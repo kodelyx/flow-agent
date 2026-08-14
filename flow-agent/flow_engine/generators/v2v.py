@@ -4,7 +4,7 @@ import logging
 import random
 
 from ..config import ENDPOINTS
-from .common import build_client_context, build_generation_context
+from .common import build_client_context, build_generation_context, resolve_seed
 
 log = logging.getLogger("flow_engine.generators.v2v")
 
@@ -12,7 +12,8 @@ log = logging.getLogger("flow_engine.generators.v2v")
 async def edit_video(bridge, prompt: str, aspect: str, project_id: str,
                      video_media_id: str, fps: int = 24, duration: int = 10,
                      start_frame: int = 0, end_frame: int = None,
-                     ref_media_ids: list[str] = None) -> list[str] | None:
+                     ref_media_ids: list[str] = None,
+                     seed: int = None) -> list[str] | None:
     """Submit V2V edit request. Returns list of media_ids."""
     if end_frame is None:
         end_frame = fps * duration
@@ -26,7 +27,7 @@ async def edit_video(bridge, prompt: str, aspect: str, project_id: str,
         "aspectRatio": aspect,
         "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
         "videoModelKey": "abra_edit",
-        "seed": random.randint(1, 9999),
+        "seed": resolve_seed(seed),
         "metadata": {},
         "videoInput": {
             "mediaId": video_media_id,

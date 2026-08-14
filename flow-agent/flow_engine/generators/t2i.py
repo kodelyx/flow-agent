@@ -61,7 +61,7 @@ def _parse_image_results(data: dict) -> list[dict]:
 
 async def generate_image(bridge, prompt: str, aspect: str, project_id: str,
                          count: int = 1, ref_media_ids: list[str] = None,
-                         model: str = None) -> list[dict] | None:
+                         model: str = None, seed: int = None) -> list[dict] | None:
     """Generate images from text prompt.
 
     Args:
@@ -72,6 +72,7 @@ async def generate_image(bridge, prompt: str, aspect: str, project_id: str,
         count: Number of variations (1-4)
         ref_media_ids: Optional reference image media IDs
         model: Optional image model name (harbor_seal, narwhal, gem_pix_2, etc.)
+        seed: Optional explicit seed; reproducible when set, timestamp-derived when not
 
     Returns:
         List of {"media_id": str, "image_url": str} or None on error
@@ -87,7 +88,7 @@ async def generate_image(bridge, prompt: str, aspect: str, project_id: str,
     for i in range(count):
         req_item = {
             "clientContext": build_client_context(project_id),
-            "seed": (ts + i * 1000) % 1000000,
+            "seed": ((int(seed) + i) % 4294967296) if seed is not None else (ts + i * 1000) % 1000000,
             "structuredPrompt": {"parts": [{"text": prompt}]},
             "imageAspectRatio": aspect_ratio,
             "imageModelName": target_model,

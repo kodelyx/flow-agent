@@ -14,6 +14,9 @@ const API_KEY = 'AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY';
 let ws = null;
 let flowKey = null;
 let callbackSecret = null;  // Auth secret for HTTP callback, received from server on WS connect
+let httpConnected = false;
+let httpPollTimer = null;
+let httpPollIntervalMs = 1000;
 let state = 'off'; // off | idle | running
 let manualDisconnect = false;
 let extensionClientId = '';
@@ -147,10 +150,8 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     chrome.storage.local.set({ flowKey, metrics });
     console.log('[Flow Agent] Bearer token captured');
 
-    // Notify agent
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
-    }
+    // Notify whichever transport is active.
+    sendToAgent({ type: 'token_captured', flowKey, clientId: extensionClientId });
   },
   { urls: ['https://aisandbox-pa.googleapis.com/*', 'https://labs.google/*'] },
   ['requestHeaders', 'extraHeaders'],
@@ -280,6 +281,7 @@ async function captureTokenFromFlowTab() {
 
 async function connectToAgent() {
   if (manualDisconnect) return;
+  await connectHttpAgent();
   if (ws?.readyState === WebSocket.CONNECTING) return;
   if (ws?.readyState === WebSocket.OPEN) return;
 
@@ -362,9 +364,7 @@ async function connectToAgent() {
         // If token is still fresh, just send it back — no need to open/reload
         if (isTokenFresh()) {
           console.log('[Flow Agent] open_flow_tab: token fresh, sending cached token');
-          if (ws?.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
-          }
+          sendToAgent({ type: 'token_captured', flowKey, clientId: extensionClientId });
         } else {
           console.log('[Flow Agent] open_flow_tab: token missing/expired, opening tab');
           const tabs = await chrome.tabs.query({
@@ -456,12 +456,87 @@ async function connectToAgent() {
   };
 }
 
+function agentHttpBase() {
+  const host = String(connectedServerHost || CONFIG.DEFAULT_SERVER_HOST).trim().replace(/\/$/, '');
+  const hostWithoutScheme = host.replace(/^https?:\/\//i, '');
+  const local = /^(127\.0\.0\.1|localhost|192\.168\.|10\.)(:|$)/.test(hostWithoutScheme);
+  return /^https?:\/\//i.test(host) ? host : `${local ? 'http' : 'https'}://${host}`;
+}
+
+async function connectHttpAgent() {
+  if (manualDisconnect || httpConnected) return;
+  const storage = await chrome.storage.local.get(['clientId']);
+  let clientId = storage.clientId;
+  if (!clientId) {
+    const prefix = CONFIG.DEFAULT_CLIENT_ID_PREFIX || 'client';
+    clientId = `${prefix}-${Math.random().toString(36).substring(2, 8)}`;
+    await chrome.storage.local.set({ clientId });
+  }
+  extensionClientId = clientId;
+  connectedServerHost = CONFIG.DEFAULT_SERVER_HOST;
+  try {
+    const response = await fetch(`${agentHttpBase()}/api/ext/hello`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: clientId,
+        clientId,
+        flowKey,
+        flowKeyPresent: !!flowKey,
+        extension_version: chrome.runtime.getManifest().version,
+      }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    callbackSecret = data.secret;
+    callbackUrl = new URL(data.callback_url, agentHttpBase()).toString();
+    httpPollIntervalMs = Math.max(250, Number(data.poll_interval_ms) || 1000);
+    httpConnected = true;
+    await chrome.storage.local.set({ callbackSecret, callbackUrl });
+    setState('idle');
+    scheduleHttpPoll(0);
+    flushOutbox();
+  } catch (error) {
+    httpConnected = false;
+    console.warn('[Flow Agent] HTTP bridge unavailable; using WebSocket fallback:', error.message);
+  }
+}
+
+function scheduleHttpPoll(delay = httpPollIntervalMs) {
+  if (httpPollTimer) clearTimeout(httpPollTimer);
+  if (!httpConnected || manualDisconnect) return;
+  httpPollTimer = setTimeout(pollHttpCommands, delay);
+}
+
+async function pollHttpCommands() {
+  if (!httpConnected || manualDisconnect) return;
+  try {
+    const response = await fetch(`${agentHttpBase()}/api/ext/poll?session_id=${encodeURIComponent(extensionClientId)}`, {
+      headers: { Authorization: `Bearer ${callbackSecret}` },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    for (const command of data.commands || []) {
+      if (typeof ws?.onmessage === 'function') {
+        await ws.onmessage({ data: JSON.stringify(command) });
+      }
+    }
+    scheduleHttpPoll();
+  } catch (error) {
+    httpConnected = false;
+    console.warn('[Flow Agent] HTTP polling stopped:', error.message);
+    scheduleReconnect();
+  }
+}
+
 function scheduleReconnect() {
   chrome.alarms.create('reconnect', { delayInMinutes: 0.5 });
 }
 
 function keepAlive() {
-  if (ws?.readyState === WebSocket.OPEN) {
+  if (httpConnected) {
+    connectHttpAgent();
+  } else if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'ping' }));
   } else {
     connectToAgent();
@@ -475,8 +550,13 @@ function sendToAgent(msg) {
     enqueueResponse(msg);
     return;
   }
-  // Non-response messages (ping, status, token) — best-effort over WS.
-  if (ws?.readyState === WebSocket.OPEN) {
+  if (httpConnected && callbackSecret) {
+    fetch(callbackUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${callbackSecret}` },
+      body: JSON.stringify({ ...msg, session_id: extensionClientId }),
+    }).catch(() => {});
+  } else if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg));
   }
 }
@@ -514,8 +594,11 @@ async function deliverOnce(entry) {
 
     const resp = await fetch(targetCallbackUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(entry.msg),
+      headers: {
+        'Content-Type': 'application/json',
+        ...(callbackSecret ? { Authorization: `Bearer ${callbackSecret}` } : {}),
+      },
+      body: JSON.stringify({ ...entry.msg, session_id: extensionClientId }),
     });
     // Any HTTP reply means the backend is reachable and has taken the response
     // (ok:true = matched a request, ok:false = unknown id / already handled).
@@ -879,8 +962,10 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
 
   if (msg.type === 'STATUS') {
     reply({
-      connected: ws?.readyState === WebSocket.OPEN,
-      agentConnected: ws?.readyState === WebSocket.OPEN,
+      connected: httpConnected || ws?.readyState === WebSocket.OPEN,
+      agentConnected: httpConnected || ws?.readyState === WebSocket.OPEN,
+      httpConnected,
+      transport: httpConnected ? 'http' : (ws?.readyState === WebSocket.OPEN ? 'ws' : 'none'),
       flowKeyPresent: !!flowKey,
       manualDisconnect,
       tokenAge: metrics.tokenCapturedAt ? Date.now() - metrics.tokenCapturedAt : null,
@@ -897,6 +982,8 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
 
   if (msg.type === 'DISCONNECT') {
     manualDisconnect = true;
+    httpConnected = false;
+    if (httpPollTimer) clearTimeout(httpPollTimer);
     if (ws) ws.close();
     reply({ ok: true });
     return true;

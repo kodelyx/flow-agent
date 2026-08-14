@@ -7,6 +7,7 @@ import asyncio
 import base64
 import logging
 import os
+import random
 import time
 import uuid
 
@@ -16,6 +17,20 @@ from ..config import (
 from flow_server.media_types import sniff_media_type
 
 log = logging.getLogger("flow_engine.generators")
+
+
+def resolve_seed(seed: int | None, index: int = 0) -> int:
+    """Resolve the seed for one request item.
+
+    An explicit seed makes a generation reproducible, which is what lets a shot
+    be re-rolled while holding its look. Items in a multi-variation batch are
+    offset by their index so the takes still differ from each other but stay
+    reproducible as a set. None keeps the original behaviour: a fresh random
+    seed per request.
+    """
+    if seed is None:
+        return random.randint(1, 9999)
+    return (int(seed) + index) % 4294967296
 
 
 def build_client_context(project_id: str) -> dict:
