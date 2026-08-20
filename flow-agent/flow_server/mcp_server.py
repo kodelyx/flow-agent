@@ -252,7 +252,7 @@ def handle_tools_list(request_id):
         },
         {
             "name": "generate_flow_video",
-            "description": "Generate 1-20 Flow videos with duration, aspect, start asset, seed, first-last frame, and reference-media control.",
+            "description": "Generate 1-20 Flow videos with duration, aspect, start asset, seed, first-last frame, reference-media, and delivery-resolution control (720p native, 1080p or 4K via Flow's upsampler).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -296,9 +296,34 @@ def handle_tools_list(request_id):
                     "video_model": {
                         "type": "string",
                         "description": "Override the Flow videoModelKey (defaults to abra_t2v_<duration>s)"
+                    },
+                    "resolution": {
+                        "type": "string",
+                        "enum": ["720p", "1080p", "4k"],
+                        "default": "720p",
+                        "description": "Delivery resolution. Flow generates at 720p; '1080p' (free) or '4k' (paid, higher tier) add Flow's upsampler pass and the high-resolution file is returned first."
                     }
                 },
                 "required": ["prompt"]
+            }
+        },
+        {
+            "name": "upsample_flow_video",
+            "description": "Upsample an existing Flow video to 1080p or 4K — the same high-resolution pass behind the Flow UI's HD download. Accepts a media ID or a local video path already in Flow history.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "media_id": {"type": "string", "description": "Media ID of a finished Flow video, or a local video path/filename tracked in history"},
+                    "resolution": {
+                        "type": "string",
+                        "enum": ["1080p", "4k"],
+                        "default": "1080p",
+                        "description": "Target resolution: '1080p' is free, '4k' costs credits and needs a higher Flow tier"
+                    },
+                    "aspect": {"type": "string", "enum": ["landscape", "portrait"], "default": "landscape", "description": "Aspect ratio of the source video"},
+                    "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295, "description": "Optional explicit upsampler seed"}
+                },
+                "required": ["media_id"]
             }
         },
         {
@@ -336,6 +361,12 @@ def handle_tools_list(request_id):
                     "ref_media_ids": {
                         "type": "array", "items": {"type": "string"}, "maxItems": 10,
                         "description": "Reference media applied to every shot, for style or character carry-through"
+                    },
+                    "resolution": {
+                        "type": "string",
+                        "enum": ["720p", "1080p", "4k"],
+                        "default": "720p",
+                        "description": "Delivery resolution for every shot in the sequence"
                     }
                 },
                 "required": ["shots"]
@@ -585,7 +616,8 @@ def call_generate_flow_image(prompt, size="1280x720", count=1, ref_image_path=No
 
 def call_generate_flow_video(prompt, aspect="landscape", start_image_path=None, duration=8,
                              count=1, start_media_id=None, ref_media_ids=None, is_video=False,
-                             seed=None, end_image_path=None, end_media_id=None, video_model=None):
+                             seed=None, end_image_path=None, end_media_id=None, video_model=None,
+                             resolution=None):
     if not prompt or not str(prompt).strip():
         return "Error: 'prompt' is required and cannot be empty."
     prompt = str(prompt).strip()
@@ -605,6 +637,8 @@ def call_generate_flow_video(prompt, aspect="landscape", start_image_path=None, 
         payload["seed"] = int(seed)
     if video_model:
         payload["video_model"] = video_model
+    if resolution:
+        payload["resolution"] = resolution
     if end_media_id:
         payload["end_media_id"] = end_media_id
 
@@ -643,9 +677,16 @@ def call_generate_flow_video(prompt, aspect="landscape", start_image_path=None, 
                 return "No videos returned by Flow Agent."
             urls = [item.get("url") for item in data if item.get("url")]
             media_ids = [item.get("media_id") for item in data if item.get("media_id")]
-            return (f"Success! Generated {len(data)} video(s)."
+            resolutions = [item.get("resolution") for item in data if item.get("resolution")]
+            summary = ""
+            if resolutions:
+                ordered = sorted(set(resolutions), key=resolutions.index)
+                summary = " Resolution: " + ", ".join(ordered) + "."
+            note = res_data.get("note")
+            return (f"Success! Generated {len(data)} video(s)." + summary
                     + ("\nURLs:\n" + "\n".join(urls) if urls else "")
-                    + ("\nMedia IDs: " + ", ".join(media_ids) if media_ids else ""))
+                    + ("\nMedia IDs: " + ", ".join(media_ids) if media_ids else "")
+                    + (f"\nNote: {note}" if note else ""))
     except urllib.error.HTTPError as e:
         try:
             err_msg = e.read().decode('utf-8')
@@ -654,6 +695,49 @@ def call_generate_flow_video(prompt, aspect="landscape", start_image_path=None, 
         return f"Error generating video ({e.code}): {err_msg}"
     except Exception as e:
         return f"Failed to communicate with Flow Agent server: {str(e)}"
+
+def call_upsample_flow_video(media_id, resolution="1080p", aspect="landscape", seed=None):
+    """Upsample a finished Flow video to 1080p or 4K through the backend."""
+    if not media_id or not str(media_id).strip():
+        return "Error: 'media_id' is required."
+    payload = {
+        "media_id": str(media_id).strip(),
+        "resolution": str(resolution or "1080p"),
+        "aspect": aspect,
+    }
+    if seed is not None:
+        payload["seed"] = int(seed)
+
+    try:
+        log_debug(f"Requesting {payload['resolution']} upsample for {payload['media_id']}")
+        req = urllib.request.Request(
+            f"{FLOW_API_URL}/v1/videos/upsample",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=900) as response:
+            if response.status != 200:
+                return f"Error upsampling video ({response.status})"
+            res_data = json.loads(response.read().decode("utf-8"))
+            data = res_data.get("data", [])
+            if not data:
+                return "No upsampled video returned by Flow Agent."
+            item = data[0]
+            return (f"Success! Upsampled to {item.get('resolution') or payload['resolution']}."
+                    + (f"\nURL: {item['url']}" if item.get("url") else "")
+                    + (f"\nMedia ID: {item['media_id']}" if item.get("media_id") else "")
+                    + (f"\nUpsampled from: {item['source_media_id']}"
+                       if item.get("source_media_id") else ""))
+    except urllib.error.HTTPError as e:
+        try:
+            err_msg = e.read().decode("utf-8")
+        except Exception:
+            err_msg = str(e)
+        return f"Error upsampling video ({e.code}): {err_msg}"
+    except Exception as e:
+        return f"Failed to communicate with Flow Agent server: {str(e)}"
+
 
 def call_edit_flow_video(prompt, media_id=None, video_path=None, aspect="landscape",
                          duration=8, ref_media_ids=None):
@@ -841,7 +925,7 @@ def _post_video_json(payload, timeout=900):
 
 def call_generate_flow_sequence(shots, aspect="landscape", duration=8, output_dir=None,
                                 start_image_path=None, seed=None, video_model=None,
-                                ref_media_ids=None):
+                                ref_media_ids=None, resolution=None):
     """Generate a continuity-chained run of shots.
 
     Each shot after the first starts on the previous shot's final frame, so cuts
@@ -879,6 +963,8 @@ def call_generate_flow_sequence(shots, aspect="landscape", duration=8, output_di
             payload["video_model"] = video_model
         if ref_media_ids:
             payload["ref_media_ids"] = list(ref_media_ids)[:10]
+        if resolution:
+            payload["resolution"] = resolution
         if carry_frame:
             try:
                 payload["image_base64"] = _file_data_uri(carry_frame)
@@ -1020,6 +1106,15 @@ def handle_tool_call(request_id, tool_name, arguments):
             arguments.get("end_image_path"),
             arguments.get("end_media_id"),
             arguments.get("video_model"),
+            arguments.get("resolution"),
+        )
+        content = [{"type": "text", "text": text}]
+    elif tool_name == "upsample_flow_video":
+        text = call_upsample_flow_video(
+            arguments.get("media_id"),
+            arguments.get("resolution", "1080p"),
+            arguments.get("aspect", "landscape"),
+            arguments.get("seed"),
         )
         content = [{"type": "text", "text": text}]
     elif tool_name == "generate_flow_sequence":
@@ -1032,6 +1127,7 @@ def handle_tool_call(request_id, tool_name, arguments):
             arguments.get("seed"),
             arguments.get("video_model"),
             arguments.get("ref_media_ids"),
+            arguments.get("resolution"),
         )
         content = [{"type": "text", "text": json.dumps(result, indent=2)}]
     elif tool_name == "extract_video_frame":

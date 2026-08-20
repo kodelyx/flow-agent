@@ -19,13 +19,26 @@ from fastapi import HTTPException
 
 from flow_server.config import OUTPUT_DIR, _normalise_model
 from flow_server.media_types import extension_for_media, sniff_media_type
-from flow_server.models import ImageGenerationRequest, VideoGenerationRequest
+from flow_server.models import ImageGenerationRequest, VideoGenerationRequest, VideoUpsampleRequest
 from flow_server.mcp.helpers import _mcp_error, _mcp_upload_local_file, _mcp_download_url
 from flow_server.routes.system import health, list_models, get_flow_credits
 from flow_server.routes.media import get_history
-from flow_server.routes.generation import openai_generate_image, openai_generate_video
+from flow_server.routes.generation import (
+    openai_generate_image,
+    openai_generate_video,
+    openai_upsample_video,
+)
 
 log = logging.getLogger("flow_engine.openai_api")
+
+
+def _resolution_summary(data) -> str:
+    """Summarise the delivered resolutions, so a client sees 1080p landed."""
+    resolutions = [item.get("resolution") for item in data if item.get("resolution")]
+    if not resolutions:
+        return ""
+    ordered = sorted(set(resolutions), key=resolutions.index)
+    return " Resolution: " + ", ".join(ordered) + "."
 
 
 async def execute_mcp_tool(request_id, tool_name, arguments):
@@ -168,6 +181,7 @@ async def execute_mcp_tool(request_id, tool_name, arguments):
                 start_media_id=start_media_id,
                 ref_media_ids=(list(arguments.get("ref_media_ids") or [])[:10] or None),
                 is_video=is_edit,
+                resolution=arguments.get("resolution"),
             )
 
             res = await openai_generate_video(req, x_client_id=None)
@@ -179,8 +193,36 @@ async def execute_mcp_tool(request_id, tool_name, arguments):
                 media_ids = [item.get("media_id") for item in data if item.get("media_id")]
                 verb = "Edited" if is_edit else "Generated"
                 text = (f"Success! {verb} {len(data)} video(s)."
+                        + _resolution_summary(data)
                         + ("\nURLs:\n" + "\n".join(urls) if urls else "")
                         + ("\nMedia IDs: " + ", ".join(media_ids) if media_ids else ""))
+                if res.get("note"):
+                    text += "\nNote: " + res["note"]
+
+        elif tool_name == "upsample_flow_video":
+            media_id = str(arguments.get("media_id") or "").strip()
+            if not media_id:
+                return _mcp_error(request_id, -32602, "Error: 'media_id' is required.")
+
+            seed = arguments.get("seed")
+            req = VideoUpsampleRequest(
+                media_id=media_id,
+                resolution=str(arguments.get("resolution") or "1080p"),
+                aspect=arguments.get("aspect", "landscape"),
+                seed=int(seed) if seed is not None else None,
+            )
+
+            res = await openai_upsample_video(req, x_client_id=None)
+            data = res.get("data", [])
+            if not data:
+                text = "No upsampled video returned by Flow Agent."
+            else:
+                item = data[0]
+                text = (f"Success! Upsampled to {item.get('resolution') or req.resolution}."
+                        + (f"\nURL: {item['url']}" if item.get("url") else "")
+                        + (f"\nMedia ID: {item['media_id']}" if item.get("media_id") else "")
+                        + (f"\nUpsampled from: {item['source_media_id']}"
+                           if item.get("source_media_id") else ""))
 
         elif tool_name == "upload_flow_media":
             file_path = arguments.get("file_path")

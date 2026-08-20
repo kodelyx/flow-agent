@@ -31,12 +31,31 @@ class VideoGenerationRequest(BaseModel):
     is_video: Optional[bool] = Field(False, description="True if the pre-uploaded reference is a video")
     seed: Optional[int] = Field(None, ge=0, le=4294967295, description="Optional explicit generation seed")
     video_model: Optional[str] = Field(None, description="Optional Flow videoModelKey override")
+    resolution: Optional[str] = Field(
+        None,
+        description=(
+            "Optional delivery resolution: '720p' (native, default), '1080p', or '4k'. "
+            "Above 720p the finished video is run through Flow's upsampler pass, "
+            "the same step behind the Flow UI's high-resolution download."
+        ),
+    )
+
+
+class VideoUpsampleRequest(BaseModel):
+    """Upsample one already-generated Flow video to 1080p or 4K."""
+
+    media_id: str = Field(..., description="Media ID of a finished Flow video, or a local video path/filename in history")
+    resolution: str = Field("1080p", description="Target resolution: '1080p' (free) or '4k' (paid, higher tier)")
+    aspect: str = Field("landscape", description="Aspect ratio of the source video (portrait or landscape)")
+    seed: Optional[int] = Field(None, ge=0, le=4294967295, description="Optional explicit upsampler seed")
 
 
 class GeneratedMedia(BaseModel):
     url: Optional[str] = None
     media_id: Optional[str] = None
     warning: Optional[str] = None
+    resolution: Optional[str] = Field(None, description="Delivered resolution of this file")
+    source_media_id: Optional[str] = Field(None, description="Media ID this file was upsampled from")
 
 
 class VideoGenerationResult(BaseModel):

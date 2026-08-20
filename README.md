@@ -14,6 +14,7 @@ HTTP API, and MCP clients all share one backend and one extension bridge.
 - Text-to-image and reference-image generation
 - Text-to-video, image-to-video, first/last-frame, reference-to-video, and video editing
 - 4, 6, 8, and 10-second video generation
+- 1080p and 4K video delivery through Flow's upsampler, the same pass behind the Flow UI's HD download
 - Reusable generated and uploaded media IDs, including after backend restarts
 - Exact `--output` paths with real PNG, JPEG, and WebP conversion
 - Signature-based MIME and extension detection
@@ -124,6 +125,31 @@ flow video "the character starts walking" --start character.png
 flow video "transition between scenes" --start first.png --end last.png
 flow video "keep this character consistent" --ref character.png
 ```
+
+#### Resolution
+
+Google Flow generates video at 720p. 1080p and 4K are a second *upsampler* pass
+over the finished clip — exactly what the Flow UI does behind its
+high-resolution download. Ask for it during generation:
+
+```bash
+flow video "a dragon flying over mountains" --resolution 1080p
+flow video "a dragon flying over mountains" --resolution 4k -o /absolute/path/dragon.mp4
+```
+
+The upsampled file is written to `--output`; the 720p original stays in the
+output directory and in `history.json`. If the upsample pass fails, the 720p
+video is still delivered and the CLI prints a note.
+
+Upsample a clip you already generated:
+
+```bash
+flow upsample GENERATED_VIDEO_MEDIA_ID --resolution 1080p
+flow upsample previous_take.mp4 --resolution 4k -o /absolute/path/take_4k.mp4
+```
+
+`1080p` upsampling is free. `4k` costs credits and needs a higher Flow tier;
+the backend refuses it with HTTP 402 when the balance cannot cover it.
 
 `--start`, `--end`, and `--ref` accept either local image paths or exact media
 IDs stored in `history.json`:
@@ -282,7 +308,8 @@ JSON-RPC messages are sent to `http://127.0.0.1:8001/messages`.
 - `list_flow_models` — available models and the active default
 - `get_flow_history` — generated and uploaded media history
 - `generate_flow_image` — text/reference image generation
-- `generate_flow_video` — text, start-image, and reference video generation
+- `generate_flow_video` — text, start-image, and reference video generation, with `resolution` for 720p/1080p/4K delivery
+- `upsample_flow_video` — upsample an existing video to 1080p or 4K
 - `upload_flow_media` — upload a local path, URL, or base64 media payload
 - `download_media_from_url` — download media and optionally upload it to Flow
 - `edit_flow_video` — edit a video by media ID or local video path
@@ -299,11 +326,18 @@ Default base URL: `http://127.0.0.1:8001`
 | `GET /v1/history` | Persistent generated/uploaded media history |
 | `POST /v1/images/generations` | Generate images |
 | `POST /v1/videos/generations` | Submit video generation |
-| `GET /v1/videos/generations/{job_id}` | Poll a video job |
+| `GET /v1/videos/generations/{job_id}` | Poll a video or upsample job |
+| `POST /v1/videos/upsample` | Upsample an existing video to 1080p or 4K |
 | `POST /v1/upload` | Upload an image or video reference |
 | `GET /download/{filename}` | Download a managed media file |
 | `GET /sse` | MCP over SSE |
 | `POST /messages` | MCP over SSE JSON-RPC messages |
+
+`POST /v1/videos/generations` accepts `"resolution": "720p" | "1080p" | "4k"`.
+Above 720p the response leads with the upsampled media and still includes the
+720p original, each entry carrying `resolution` and, for upsampled files,
+`source_media_id`. `POST /v1/videos/upsample` returns the same pollable job
+shape and is polled through `GET /v1/videos/generations/{job_id}`.
 
 Send an `Idempotency-Key` header when an HTTP generation request may be
 retried. Video submission returns a structured result containing a `job_id`,
@@ -334,6 +368,15 @@ Environment variables take precedence over values in `.env`.
 | `FLOW_VIDEO_POLL_TIMEOUT` | `900` | CLI video-job polling timeout |
 | `MAX_CONCURRENT_REQUESTS` | `5` | Maximum concurrent Flow requests |
 | `REQUEST_MIN_INTERVAL` | `3` | Minimum seconds between request starts |
+| `VIDEO_UPSAMPLER_1080P_MODEL` | `veo_3_1_upsampler_1080p` | Flow 1080p upsampler model key |
+| `VIDEO_UPSAMPLER_4K_MODEL` | `veo_3_1_upsampler_4k` | Flow 4K upsampler model key |
+| `VIDEO_UPSAMPLE_ENUM_1080P` | `VIDEO_RESOLUTION_1080P` | 1080p resolution enum sent to Flow |
+| `VIDEO_UPSAMPLE_ENUM_4K` | `VIDEO_RESOLUTION_4K` | 4K resolution enum sent to Flow |
+
+The four upsampler variables exist because Flow's upsample API is undocumented.
+If Google renames a model key or a resolution enum, override it here instead of
+patching code. A rejected enum is retried with the known spelling variants and
+finally without the field at all, so the model key alone can carry the target.
 
 Image model aliases:
 
@@ -389,6 +432,11 @@ The generated binary is written to `dist/flow` (`dist/flow.exe` on Windows).
   record nor local managed file still exists.
 - **A retry might have reached Flow** — repeat it with the same idempotency key;
   do not create a new key for the same paid request.
+- **1080p or 4K came back as 720p** — read the `note` in the response. Flow
+  rejected or failed the upsample pass; the 720p original is still delivered.
+  If Flow changed the wire format, override `VIDEO_UPSAMPLER_*_MODEL` or
+  `VIDEO_UPSAMPLE_ENUM_*` and retry. `python -m flow_server.sniff` captures the
+  Flow UI's own upsample request for comparison.
 - **MCP tools appear but fail** — verify `flow status`, then restart the MCP
   client after correcting its command/PATH configuration.
 
