@@ -117,6 +117,7 @@ ENDPOINTS = {
     "generate_r2v": "/v1/video:batchAsyncGenerateVideoReferenceImages",
     "generate_edit": "/v1/video:batchAsyncGenerateVideoEditVideo",
     "upload_image": "/v1/flow/uploadImage",
+    "upsample_video": "/v1/video:batchAsyncGenerateVideoUpsampleVideo",
     "poll_status": "/v1/video:batchCheckAsyncVideoGenerationStatus",
     "get_media": "/v1/media/{media_id}",
     "get_credits": "/v1/credits",
@@ -131,6 +132,26 @@ MODELS = {
     },
     "edit": "abra_edit",
 }
+
+# ─── Video upsampling (native generation is 720p) ─────────────
+# Flow generates video at 720p and reaches 1080p/4K through a second
+# "upsampler" pass on the finished media, exactly like the Flow UI's
+# high-resolution download. Model keys and the resolution enum are part of an
+# undocumented API, so both stay overridable without a code change.
+NATIVE_VIDEO_RESOLUTION = "720p"
+
+VIDEO_UPSAMPLE_MODELS = {
+    "1080p": os.environ.get("VIDEO_UPSAMPLER_1080P_MODEL", "veo_3_1_upsampler_1080p"),
+    "4k": os.environ.get("VIDEO_UPSAMPLER_4K_MODEL", "veo_3_1_upsampler_4k"),
+}
+
+VIDEO_UPSAMPLE_RESOLUTIONS = {
+    "1080p": os.environ.get("VIDEO_UPSAMPLE_ENUM_1080P", "VIDEO_RESOLUTION_1080P"),
+    "4k": os.environ.get("VIDEO_UPSAMPLE_ENUM_4K", "VIDEO_RESOLUTION_4K"),
+}
+
+# 1080p upsampling is free; 4K is a paid, higher-tier operation.
+CREDITS_PER_UPSAMPLE = {"1080p": 0, "4k": 50}
 
 DURATIONS = [4, 6, 8, 10]
 DEFAULT_DURATION = 10

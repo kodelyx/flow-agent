@@ -90,7 +90,7 @@ def get_mcp_tools_list():
         },
         {
             "name": "generate_flow_video",
-            "description": "Generate 1-20 Flow videos with duration, aspect, start asset, and reference-media control.",
+            "description": "Generate 1-20 Flow videos with duration, aspect, start asset, reference-media, and delivery-resolution control (720p native, 1080p or 4K via Flow's upsampler).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -116,9 +116,34 @@ def get_mcp_tools_list():
                         "items": {"type": "string"},
                         "maxItems": 10,
                         "description": "Optional Flow reference-media IDs for reference-to-video"
+                    },
+                    "resolution": {
+                        "type": "string",
+                        "enum": ["720p", "1080p", "4k"],
+                        "default": "720p",
+                        "description": "Delivery resolution. Flow generates at 720p; '1080p' (free) or '4k' (paid, higher tier) add Flow's upsampler pass and the high-resolution file is returned first."
                     }
                 },
                 "required": ["prompt"]
+            }
+        },
+        {
+            "name": "upsample_flow_video",
+            "description": "Upsample an existing Flow video to 1080p or 4K — the same high-resolution pass behind the Flow UI's HD download. Accepts a media ID or a local video path already in Flow history.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "media_id": {"type": "string", "description": "Media ID of a finished Flow video, or a local video path/filename tracked in history"},
+                    "resolution": {
+                        "type": "string",
+                        "enum": ["1080p", "4k"],
+                        "default": "1080p",
+                        "description": "Target resolution: '1080p' is free, '4k' costs credits and needs a higher Flow tier"
+                    },
+                    "aspect": {"type": "string", "enum": ["landscape", "portrait"], "default": "landscape", "description": "Aspect ratio of the source video"},
+                    "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295, "description": "Optional explicit upsampler seed"}
+                },
+                "required": ["media_id"]
             }
         },
         {
