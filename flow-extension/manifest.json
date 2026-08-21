@@ -23,6 +23,8 @@
     "https://aisandbox-pa.sandbox.googleapis.com/*",
     "https://storage.googleapis.com/*",
     "https://flow-content.google/*",
+    "https://www.flowmusic.app/*",
+    "https://flowmusic.app/*",
     "http://127.0.0.1:8001/*",
     "http://localhost:8001/*",
     "https://flow.kodelyx.in/*"
@@ -34,7 +36,11 @@
     {
       "matches": [
         "https://labs.google/fx/tools/flow*",
-        "https://labs.google/fx/*/tools/flow*"
+        "https://labs.google/fx/*/tools/flow*",
+        "https://labs.google/fx/tools/music-fx*",
+        "https://labs.google/fx/*/tools/music-fx*",
+        "https://www.flowmusic.app/*",
+        "https://flowmusic.app/*"
       ],
       "js": [
         "content.js"
@@ -48,7 +54,9 @@
         "injected.js"
       ],
       "matches": [
-        "https://labs.google/*"
+        "https://labs.google/*",
+        "https://www.flowmusic.app/*",
+        "https://flowmusic.app/*"
       ]
     }
   ],

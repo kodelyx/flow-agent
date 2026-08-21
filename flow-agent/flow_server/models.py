@@ -33,6 +33,17 @@ class VideoGenerationRequest(BaseModel):
     video_model: Optional[str] = Field(None, description="Optional Flow videoModelKey override")
 
 
+class MusicGenerationRequest(BaseModel):
+    prompt: str = Field(..., description="The prompt describing the music, mood, genre, or instruments")
+    duration: int = Field(30, description="Duration in seconds (e.g. 10, 30, 50, 70)")
+    loop: bool = Field(False, description="Whether to generate a seamless loop")
+    n: int = Field(1, ge=1, le=4, description="Number of music tracks to generate (1-4)")
+    model: Optional[str] = Field(None, description="Optional music model/tool name (e.g. MUSIC_FX)")
+    seed: Optional[int] = Field(None, ge=0, le=4294967295, description="Optional explicit generation seed")
+    response_format: str = Field("url", description="Return format: url or b64_json")
+    user: Optional[str] = None
+
+
 class GeneratedMedia(BaseModel):
     url: Optional[str] = None
     media_id: Optional[str] = None

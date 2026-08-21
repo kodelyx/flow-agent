@@ -16,6 +16,15 @@ from typing import BinaryIO
 
 
 _MIME_EXTENSIONS = {
+    "audio/aac": ".aac",
+    "audio/flac": ".flac",
+    "audio/mp3": ".mp3",
+    "audio/mp4": ".m4a",
+    "audio/mpeg": ".mp3",
+    "audio/ogg": ".ogg",
+    "audio/wav": ".wav",
+    "audio/x-m4a": ".m4a",
+    "audio/x-wav": ".wav",
     "image/avif": ".avif",
     "image/bmp": ".bmp",
     "image/gif": ".gif",
@@ -87,17 +96,29 @@ def _mime_from_signature(header: bytes) -> str | None:
         return "image/bmp"
     if header.startswith((b"II*\x00", b"MM\x00*")):
         return "image/tiff"
+    if header.startswith(b"ID3") or header.startswith((b"\xff\xfb", b"\xff\xf3", b"\xff\xf2", b"\xff\xe3")):
+        return "audio/mpeg"
+    if header.startswith(b"fLaC"):
+        return "audio/flac"
+    if header.startswith(b"OggS"):
+        return "audio/ogg"
+    if header.startswith((b"\xff\xf1", b"\xff\xf9")):
+        return "audio/aac"
     if len(header) >= 12 and header[:4] == b"RIFF":
         if header[8:12] == b"WEBP":
             return "image/webp"
         if header[8:12] == b"AVI ":
             return "video/x-msvideo"
+        if header[8:12] == b"WAVE":
+            return "audio/wav"
 
     # ISO base media files share the ftyp container.  The major/compatible
     # brand tells image formats apart from MP4 and QuickTime video.
     if len(header) >= 12 and header[4:8] == b"ftyp":
         brands = header[8:64]
         major_brand = header[8:12]
+        if any(brand in brands for brand in (b"M4A ", b"M4B ", b"m4a ", b"f4a ")):
+            return "audio/mp4"
         if any(brand in brands for brand in (b"avif", b"avis")):
             return "image/avif"
         if any(brand in brands for brand in (b"heic", b"heix", b"hevc", b"hevx")):

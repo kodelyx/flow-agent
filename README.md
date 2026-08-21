@@ -1,7 +1,7 @@
 # Flow Agent
 
 CLI, OpenAI-compatible API, Chrome extension bridge, and MCP server for Google
-Flow image and video generation.
+Flow image, video, and music generation.
 
 [![Release](https://img.shields.io/github/v/release/kodelyx/flow-agent)](https://github.com/kodelyx/flow-agent/releases)
 [![Build](https://github.com/kodelyx/flow-agent/actions/workflows/build.yml/badge.svg)](https://github.com/kodelyx/flow-agent/actions/workflows/build.yml)
@@ -13,9 +13,10 @@ HTTP API, and MCP clients all share one backend and one extension bridge.
 
 - Text-to-image and reference-image generation
 - Text-to-video, image-to-video, first/last-frame, reference-to-video, and video editing
+- Text-to-music and soundtrack generation with custom duration, looping, and variations
 - 4, 6, 8, and 10-second video generation
 - Reusable generated and uploaded media IDs, including after backend restarts
-- Exact `--output` paths with real PNG, JPEG, and WebP conversion
+- Exact `--output` paths with real PNG, JPEG, WebP, and audio format conversion
 - Signature-based MIME and extension detection
 - Persistent idempotency for safe paid-generation retries
 - OpenAI-compatible HTTP endpoints and pollable video jobs
@@ -131,6 +132,14 @@ IDs stored in `history.json`:
 ```bash
 flow video "animate this generated image" --start GENERATED_IMAGE_MEDIA_ID
 flow video "use these existing references" --ref GENERATED_ID UPLOADED_ID
+```
+
+### Music
+
+```bash
+flow music "a cinematic ambient synth soundtrack" --duration 30
+flow music "relaxing lo-fi hip hop beat" --loop --output bgm.mp3
+flow music "epic orchestral intro" --duration 50 --count 2 --seed 42 -o ./soundtrack.mp3
 ```
 
 ### Upload and edit
@@ -283,6 +292,7 @@ JSON-RPC messages are sent to `http://127.0.0.1:8001/messages`.
 - `get_flow_history` — generated and uploaded media history
 - `generate_flow_image` — text/reference image generation
 - `generate_flow_video` — text, start-image, and reference video generation
+- `generate_flow_music` — text-to-music and soundtrack generation with loops and duration controls
 - `upload_flow_media` — upload a local path, URL, or base64 media payload
 - `download_media_from_url` — download media and optionally upload it to Flow
 - `edit_flow_video` — edit a video by media ID or local video path
@@ -300,6 +310,7 @@ Default base URL: `http://127.0.0.1:8001`
 | `POST /v1/images/generations` | Generate images |
 | `POST /v1/videos/generations` | Submit video generation |
 | `GET /v1/videos/generations/{job_id}` | Poll a video job |
+| `POST /v1/audio/generations` | Generate music / audio tracks |
 | `POST /v1/upload` | Upload an image or video reference |
 | `GET /download/{filename}` | Download a managed media file |
 | `GET /sse` | MCP over SSE |

@@ -410,6 +410,47 @@ def handle_tools_list(request_id):
                 },
                 "required": ["prompt"]
             }
+        },
+        {
+            "name": "generate_flow_music",
+            "description": "Generate music or ambient soundscapes from a text prompt using Google Labs / Flow. Returns local audio path and media ID.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Text description of the music, genre, mood, instruments, or soundscape"
+                    },
+                    "duration": {
+                        "type": "integer",
+                        "description": "Duration in seconds (e.g. 10, 30, 50, 70). Default: 30",
+                        "default": 30
+                    },
+                    "loop": {
+                        "type": "boolean",
+                        "description": "Whether to generate a seamless audio loop. Default: false",
+                        "default": False
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "Number of variations (1-4). Default: 1",
+                        "minimum": 1,
+                        "maximum": 4,
+                        "default": 1
+                    },
+                    "output_dir": {
+                        "type": "string",
+                        "description": "Optional local destination directory; defaults to FLOW_OUTPUT_DIR"
+                    },
+                    "seed": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 4294967295,
+                        "description": "Optional generation seed for reproducible output"
+                    }
+                },
+                "required": ["prompt"]
+            }
         }
     ]
 
@@ -668,6 +709,59 @@ def call_edit_flow_video(prompt, media_id=None, video_path=None, aspect="landsca
         prompt, aspect=aspect, duration=duration, count=1,
         start_media_id=media_id, ref_media_ids=ref_media_ids, is_video=True,
     )
+
+def call_generate_flow_music(prompt, duration=30, loop=False, count=1, output_dir=None, seed=None):
+    """Generate audio/music tracks and return their details."""
+    ensure_backend_running()
+    payload = {
+        "prompt": prompt,
+        "duration": duration or 30,
+        "loop": bool(loop),
+        "n": count or 1,
+    }
+    if seed is not None:
+        payload["seed"] = int(seed)
+
+    try:
+        data = _request_json("/v1/audio/generations", payload, method="POST", timeout=300)
+    except Exception as exc:
+        return {"error": f"Audio generation request failed: {exc}"}
+
+    items = data.get("data", []) if isinstance(data, dict) else []
+    if not items:
+        return {"error": f"Audio generation returned no tracks: {data}"}
+
+    target_dir = os.path.abspath(os.path.expanduser(output_dir)) if output_dir else OUTPUT_DIR
+    os.makedirs(target_dir, exist_ok=True)
+
+    results = []
+    for item in items:
+        url = item.get("url", "")
+        media_id = item.get("media_id", "")
+        revised = item.get("revised_prompt", prompt)
+
+        filename = url.split("/media/")[-1] if "/media/" in url else os.path.basename(url)
+        local_src = os.path.join(OUTPUT_DIR, filename)
+
+        if os.path.exists(local_src) and target_dir != OUTPUT_DIR:
+            dest = os.path.join(target_dir, filename)
+            shutil.copy2(local_src, dest)
+            local_path = dest
+        else:
+            local_path = local_src
+
+        results.append({
+            "media_id": media_id,
+            "url": url,
+            "local_path": local_path,
+            "revised_prompt": revised,
+        })
+
+    return {
+        "success": True,
+        "tracks": results,
+        "primary_track": results[0]["local_path"] if results else None,
+    }
 
 def call_download_media_from_url(url, output_dir=None, filename=None,
                                  upload_to_flow=False, max_size_mb=2048):
@@ -1075,6 +1169,16 @@ def handle_tool_call(request_id, tool_name, arguments):
             arguments.get("ref_media_ids"),
         )
         content = [{"type": "text", "text": text}]
+    elif tool_name == "generate_flow_music":
+        result = call_generate_flow_music(
+            arguments.get("prompt"),
+            arguments.get("duration", 30),
+            arguments.get("loop", False),
+            arguments.get("count", 1),
+            arguments.get("output_dir"),
+            arguments.get("seed"),
+        )
+        content = [{"type": "text", "text": json.dumps(result, indent=2)}]
     else:
         return {
             "jsonrpc": "2.0",
