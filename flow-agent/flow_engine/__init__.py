@@ -30,12 +30,23 @@ for _noisy in ("uvicorn.access", "websockets", "websockets.server"):
 # ─── Public API ──────────────────────────────────────────────
 
 from .bridge import ExtensionBridge
-from .config import ASPECTS, DEFAULT_PROJECT, ENDPOINTS, CLIENT_CTX, API_KEY, API_BASE
+from .config import (
+    ASPECTS,
+    DEFAULT_PROJECT,
+    ENDPOINTS,
+    CLIENT_CTX,
+    API_KEY,
+    API_BASE,
+    DEFAULT_MUSIC_DURATION,
+    MUSIC_DURATIONS,
+)
 from .generators import (
     generate_video,
     edit_video,
     upload_image,
     generate_video_i2v,
+    generate_music,
+    download_music,
     poll_status,
     download_video,
     build_client_context,
@@ -51,6 +62,8 @@ __all__ = [
     "edit_video",
     "upload_image",
     "generate_video_i2v",
+    "generate_music",
+    "download_music",
     "poll_status",
     "download_video",
     "build_client_context",
@@ -63,6 +76,8 @@ __all__ = [
     "CLIENT_CTX",
     "API_KEY",
     "API_BASE",
+    "DEFAULT_MUSIC_DURATION",
+    "MUSIC_DURATIONS",
     # Media store
     "media_store",
 ]

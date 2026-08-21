@@ -358,12 +358,13 @@ class ExtensionBridge:
     async def _force_refresh_client(self, client_id):
         """Force a client to reload its Flow tab and re-capture a fresh token,
         bypassing the extension's 50-min freshness cache. Used to self-heal a
-        stale token (Google invalidates via inactivity before the cache expires).
+        stale token (Google invalidates via inactivity before the cache expires)
+        or a stale reCAPTCHA session.
         """
-        if client_id not in self._clients:
+        if client_id not in self._clients and not self.http_registry.is_connected(client_id) and client_id != "__http__":
             return
         try:
-            log.info("Force-refreshing Flow tab for client %s (stale token self-heal)...", client_id)
+            log.info("Force-refreshing Flow tab for client %s (stale token/captcha self-heal)...", client_id)
             self._tokens.pop(client_id, None)
             await self.send_message_to(client_id, {"method": "force_refresh", "force": True})
             await asyncio.sleep(6)
@@ -583,6 +584,19 @@ class ExtensionBridge:
                 if fallback:
                     log.warning("Client %s still 401 after refresh — failing over to %s", client_id, fallback)
                     result = await self._run_api_request(fallback, url_path, body, captcha_action, method, timeout, meta)
+
+        # Self-heal on reCAPTCHA / UNUSUAL_ACTIVITY: force-reload the Flow tab so that
+        # the enterprise reCAPTCHA session re-initialises and issues a fresh valid token.
+        elif self._is_recaptcha_failure(result):
+            log.warning(
+                "Client %s returned reCAPTCHA / UNUSUAL_ACTIVITY — "
+                "force-reloading Flow tab and retrying once",
+                client_id,
+            )
+            await self._force_refresh_client(client_id)
+            result = await self._run_api_request(
+                client_id, url_path, body, captcha_action, method, timeout, meta
+            )
         return result
 
     @staticmethod
@@ -596,6 +610,30 @@ class ExtensionBridge:
         if isinstance(data, dict):
             err = data.get("error")
             if isinstance(err, dict) and (err.get("code") == 401 or err.get("status") == "UNAUTHENTICATED"):
+                return True
+        return False
+
+    @staticmethod
+    def _is_recaptcha_failure(result) -> bool:
+        """True if Google or extension returned a reCAPTCHA / UNUSUAL_ACTIVITY failure."""
+        if not isinstance(result, dict):
+            return False
+        err_msg = str(result.get("error") or "")
+        if "CAPTCHA" in err_msg.upper() or "UNUSUAL_ACTIVITY" in err_msg:
+            return True
+        status = result.get("status")
+        if status in (400, 403):
+            data = result.get("data")
+            text = ""
+            if isinstance(data, str):
+                text = data
+            elif isinstance(data, dict):
+                err = data.get("error", {})
+                if isinstance(err, dict):
+                    text = f"{err.get('message', '')} {err.get('status', '')} {err.get('details', '')}"
+                else:
+                    text = str(err)
+            if "UNUSUAL_ACTIVITY" in text or "recaptcha" in text.lower():
                 return True
         return False
 
@@ -649,7 +687,20 @@ class ExtensionBridge:
             **(meta or {}),
         })
 
-        url = f"{API_BASE}{url_path}?key={API_KEY}"
+        if url_path.startswith("http://") or url_path.startswith("https://"):
+            url = url_path
+            is_flowmusic = "flowmusic.app" in url
+            origin = "https://www.flowmusic.app" if is_flowmusic else CLIENT_CTX["origin"]
+            referer = "https://www.flowmusic.app/session" if is_flowmusic else CLIENT_CTX["origin"] + "/"
+            content_type = "application/json" if is_flowmusic else "text/plain;charset=UTF-8"
+            site = "same-origin" if is_flowmusic else "cross-site"
+        else:
+            url = f"{API_BASE}{url_path}?key={API_KEY}"
+            origin = CLIENT_CTX["origin"]
+            referer = CLIENT_CTX["origin"] + "/"
+            content_type = "text/plain;charset=UTF-8"
+            site = "cross-site"
+
         ua = random.choice(USER_AGENTS)
         platform = '"macOS"' if "Macintosh" in ua else '"Windows"'
 
@@ -675,18 +726,18 @@ class ExtensionBridge:
                 "method": method,
                 "headers": {
                     "accept": "*/*",
-                    "content-type": "text/plain;charset=UTF-8",
-                    "origin": CLIENT_CTX["origin"],
-                    "referer": CLIENT_CTX["origin"] + "/",
+                    "content-type": content_type,
+                    "origin": origin,
+                    "referer": referer,
                     "sec-ch-ua-mobile": "?0",
                     "sec-ch-ua-platform": platform,
                     "sec-fetch-dest": "empty",
                     "sec-fetch-mode": "cors",
-                    "sec-fetch-site": "cross-site",
+                    "sec-fetch-site": site,
                     "user-agent": ua,
                 },
                 "body": body,
-                "captchaAction": captcha_action,
+                "captchaAction": captcha_action if not ("flowmusic.app" in url) else None,
             },
         }
 

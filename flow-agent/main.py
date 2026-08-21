@@ -273,14 +273,12 @@ def _download_media(url, output_path, *, preserve_explicit=True):
             sniff_media_type,
         )
 
-        # Pass an open stream rather than the path so an unknown signature
-        # cannot silently fall back to the requested filename extension.
         with open(temporary_path, "rb") as downloaded_file:
             actual_mime = sniff_media_type(downloaded_file)
-        if not actual_mime.startswith(("image/", "video/")):
+        if not actual_mime.startswith(("image/", "video/", "audio/")):
             mime_hint = f"; server declared {declared_mime}" if declared_mime else ""
             raise ValueError(
-                f"downloaded data from {url} is not recognized image/video media "
+                f"downloaded data from {url} is not recognized image/video/audio media "
                 f"(signature detected {actual_mime}{mime_hint})"
             )
 
@@ -705,11 +703,52 @@ def cmd_batch(argv):
     batch_main(argv)
 
 
+def cmd_music(argv):
+    parser = argparse.ArgumentParser(
+        prog="flow music",
+        description="Generate music or audio through the Flow backend.",
+    )
+    parser.add_argument("prompt", help="Text prompt describing music, mood, genre, or instruments")
+    parser.add_argument("--output", "-o", default=None, help="Exact output file path (e.g. soundtrack.mp3)")
+    parser.add_argument(
+        "--duration",
+        "-d",
+        type=int,
+        choices=[10, 30, 50, 70],
+        default=30,
+        help="Duration in seconds (default: 30)",
+    )
+    parser.add_argument("--count", "-c", type=int, choices=[1, 2, 3, 4], default=1, help="Number of variations")
+    parser.add_argument("--loop", "-l", action="store_true", help="Generate a seamless loop")
+    parser.add_argument("--seed", type=int, help="Generation seed for reproducibility")
+    parser.add_argument("--idempotency-key", help="Reuse a previous request safely")
+    args = parser.parse_args(argv)
+
+    _wait_for_generation_ready()
+    output_path, explicit_output = _requested_output_path(args.output, "soundtrack.mp3")
+    payload = {
+        "prompt": args.prompt,
+        "duration": args.duration,
+        "n": args.count,
+        "loop": args.loop,
+        "response_format": "url",
+    }
+    if args.seed is not None:
+        payload["seed"] = args.seed
+
+    idempotency_key = args.idempotency_key or uuid.uuid4().hex
+    result = _post_generation(
+        "/v1/audio/generations", payload, idempotency_key, timeout=300
+    )
+    _save_outputs(result, output_path, "audio", explicit_output=explicit_output)
+
+
 COMMANDS = {
     "mcp": run_mcp,
     "image": cmd_image,
     "batch": cmd_batch,
     "video": cmd_video,
+    "music": cmd_music,
     "edit": cmd_edit,
     "upload": cmd_upload,
     "credits": cmd_credits,
@@ -727,6 +766,7 @@ def _usage():
     print("  image      Generate images")
     print("  batch      Generate batch images in parallel")
     print("  video      Generate videos")
+    print("  music      Generate music / audio")
     print("  edit       Edit a video")
     print("  upload     Upload media")
     print("  credits    Show Flow credits")

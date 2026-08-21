@@ -131,7 +131,11 @@ def record_local_media(
     actual_mime = sniff_media_type(local_path, declared_mime=mime_type)
     filename = os.path.basename(local_path)
     record = {
-        "type": "video" if actual_mime.startswith("video/") else "image",
+        "type": (
+            "video"
+            if actual_mime.startswith("video/")
+            else ("audio" if actual_mime.startswith("audio/") else "image")
+        ),
         "prompt": prompt,
         "timestamp": int(time.time()),
         "media_id": str(media_id) if media_id else None,

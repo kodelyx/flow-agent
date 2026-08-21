@@ -21,7 +21,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from flow_engine.config import MAX_CONCURRENT_REQUESTS, REQUEST_MIN_INTERVAL
 
 
 def generate_single_item(

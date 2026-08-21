@@ -15,6 +15,12 @@ input/
 *.png
 *.jpg
 *.jpeg
+*.mp3
+*.m4a
+*.wav
+*.ogg
+*.flac
+*.aac
 !flow-extension/icon*.png
 media-id.js
 

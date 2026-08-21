@@ -116,6 +116,13 @@ ENDPOINTS = {
     "generate_fl": "/v1/video:batchAsyncGenerateVideoStartAndEndImage",
     "generate_r2v": "/v1/video:batchAsyncGenerateVideoReferenceImages",
     "generate_edit": "/v1/video:batchAsyncGenerateVideoEditVideo",
+    "flowmusic_conversation": "https://www.flowmusic.app/__api/conversation",
+    "flowmusic_stream": "https://www.flowmusic.app/__api/messages/{job_id}/stream?last_id=0",
+    "flowmusic_clips": "https://www.flowmusic.app/__api/clips",
+    "generate_music": "/v1:runMusicFx",
+    "generate_music_demo": "/v1:runSoundDemo",
+    "generate_music_sound": "/v1/sound:generate",
+    "generate_music_batch": "/v1/music:batchGenerateMusic",
     "upload_image": "/v1/flow/uploadImage",
     "poll_status": "/v1/video:batchCheckAsyncVideoGenerationStatus",
     "get_media": "/v1/media/{media_id}",
@@ -135,6 +142,9 @@ MODELS = {
 DURATIONS = [4, 6, 8, 10]
 DEFAULT_DURATION = 10
 MAX_COUNT = 4
+
+DEFAULT_MUSIC_DURATION = 30
+MUSIC_DURATIONS = [10, 30, 50, 70]
 
 CREDITS_PER_VIDEO = {
     4: 7,

@@ -13,7 +13,12 @@ from fastapi import APIRouter, HTTPException, Depends, Header
 from fastapi.responses import JSONResponse
 
 from flow_server.config import OUTPUT_DIR, map_size_to_aspect
-from flow_server.models import ImageGenerationRequest, VideoGenerationRequest, VideoGenerationResult
+from flow_server.models import (
+    ImageGenerationRequest,
+    VideoGenerationRequest,
+    VideoGenerationResult,
+    MusicGenerationRequest,
+)
 from flow_server.idempotency import get_idempotency_store
 from flow_server.jobs import get_job_store
 from flow_server.history import MediaNotFoundError
@@ -21,7 +26,7 @@ from flow_server.media_history import resolve_media_reference
 from flow_server.media_types import ensure_correct_extension, extension_for_media, sniff_media_type
 from flow_server.state import verify_api_key, get_active_bridge, publish, append_to_history
 
-from flow_engine import DEFAULT_PROJECT
+from flow_engine import DEFAULT_PROJECT, generate_music, download_music
 from flow_engine.bridge import target_client_id_var
 from flow_engine.config import CREDITS_PER_VIDEO
 from flow_engine.generators.t2i import generate_image, download_image
@@ -648,3 +653,131 @@ async def _generate_video(req: VideoGenerationRequest, x_client_id: Optional[str
             f"(each {req.duration}s video costs {cost_each} credits)."
         )
     return resp
+
+
+@router.post("/v1/audio/generations", dependencies=[Depends(verify_api_key)])
+@router.post("/v1/music/generations", dependencies=[Depends(verify_api_key)])
+async def openai_generate_audio(
+    req: MusicGenerationRequest,
+    x_client_id: Optional[str] = Header(None, alias="X-Client-Id"),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+):
+    """Generate audio/music from a prompt with idempotency and history registry support."""
+    x_client_id = _header_string(x_client_id)
+    key = _header_string(idempotency_key)
+    if not key:
+        return await _generate_music(req, x_client_id)
+
+    store = get_idempotency_store(OUTPUT_DIR)
+    claim = await store.claim(key, _request_payload(req, "audio", x_client_id))
+    if claim.action == "conflict":
+        raise HTTPException(
+            status_code=409,
+            detail="Idempotency-Key was already used with a different audio generation request.",
+        )
+    if claim.action == "replay":
+        return claim.record["response"]
+    if claim.action == "failed":
+        error = claim.record.get("error", {})
+        raise HTTPException(
+            status_code=int(error.get("status_code", 500)),
+            detail=error.get("detail", "The original idempotent audio generation failed."),
+        )
+    if claim.action == "processing":
+        raise HTTPException(
+            status_code=409,
+            detail="This idempotent audio generation is already processing; retry with the same key.",
+        )
+
+    try:
+        response = await _generate_music(req, x_client_id)
+    except HTTPException as exc:
+        await store.fail(key, exc.status_code, str(exc.detail))
+        raise
+    except Exception as exc:
+        await store.fail(key, 500, str(exc))
+        raise
+    await store.succeed(key, response)
+    return response
+
+
+async def _generate_music(req: MusicGenerationRequest, x_client_id: Optional[str] = None):
+    """Generate audio from a prompt via Google Labs / MusicFX."""
+    target_client_id_var.set(x_client_id)
+    active_bridge = await get_active_bridge()
+    project_id = os.environ.get("DEFAULT_PROJECT", DEFAULT_PROJECT)
+
+    try:
+        results = await generate_music(
+            active_bridge,
+            prompt=req.prompt,
+            project_id=project_id,
+            duration=req.duration,
+            count=req.n,
+            loop=req.loop,
+            seed=req.seed,
+            model=req.model,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        log.exception("Audio generation request failed")
+        raise HTTPException(status_code=500, detail=f"Audio generation failed: {exc}") from exc
+
+    if not results:
+        raise HTTPException(status_code=500, detail="No audio returned from generator.")
+
+    timestamp = int(time.time())
+    data_outputs = []
+
+    for i, item in enumerate(results):
+        media_id = item.get("media_id") or uuid.uuid4().hex
+        audio_url = item.get("audio_url", "")
+        audio_b64 = item.get("audio_base64", "")
+        revised = item.get("revised_prompt", req.prompt)
+
+        filename = f"flow_audio_{timestamp}_{uuid.uuid4().hex[:6]}_{i+1}.mp3"
+        out_path = os.path.join(OUTPUT_DIR, filename)
+
+        saved_path = await download_music(
+            active_bridge,
+            media_id_or_url=audio_url or media_id,
+            output_path=out_path,
+            audio_base64=audio_b64,
+        )
+
+        if not saved_path or not os.path.exists(saved_path):
+            log.warning("Could not download audio track %d", i + 1)
+            continue
+
+        saved_filename = os.path.basename(saved_path)
+        served_url, r2_key = await publish(saved_filename, saved_path)
+
+        entry = {
+            "url": served_url,
+            "media_id": media_id,
+            "revised_prompt": revised,
+        }
+        if req.response_format == "b64_json":
+            with open(saved_path, "rb") as af:
+                entry["b64_json"] = base64.b64encode(af.read()).decode("utf-8")
+
+        data_outputs.append(entry)
+
+        await append_to_history(
+            "audio",
+            served_url,
+            req.prompt,
+            media_id,
+            r2_key,
+            local_path=saved_path,
+            project_id=project_id,
+        )
+
+    if not data_outputs:
+        raise HTTPException(status_code=500, detail="Failed to download or save generated audio tracks.")
+
+    return {
+        "created": timestamp,
+        "data": data_outputs,
+    }
