@@ -15,7 +15,7 @@ from flow_server.mcp import sse as mcp_sse
 app = FastAPI(
     title="Flow Agent OpenAI API Wrapper",
     description="OpenAI-compatible endpoints for Google Flow AI image generation",
-    version="2.0.4",
+    version="2.0.6",
     lifespan=lifespan
 )
 

@@ -161,7 +161,7 @@ def handle_initialize(request_id, params=None):
             },
             "serverInfo": {
                 "name": "flow",
-                "version": "2.0.4"
+                "version": "2.0.6"
             }
         }
     }

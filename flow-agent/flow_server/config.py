@@ -53,7 +53,7 @@ def map_size_to_aspect(size_str: Optional[str]) -> str:
     return "square"
 
 
-MCP_SERVER_VERSION = "2.0.4"
+MCP_SERVER_VERSION = "2.0.6"
 
 DEFAULT_IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "gem_pix_2").lower()
 _MODEL_ALIASES = {
