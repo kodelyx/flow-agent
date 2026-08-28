@@ -142,6 +142,40 @@ class ExtensionBridge:
             oldest = next(iter(self._req_meta))
             self._req_meta.pop(oldest, None)
 
+    def _is_ws_alive(self, ws) -> bool:
+        if ws is None:
+            return False
+        if getattr(ws, "closed", False):
+            return False
+        client_state = getattr(ws, "client_state", None)
+        if client_state is not None:
+            from starlette.websockets import WebSocketState
+            if client_state == WebSocketState.DISCONNECTED:
+                return False
+        if hasattr(ws, "open") and not ws.open:
+            return False
+        return True
+
+    def _purge_dead_clients(self):
+        dead = [cid for cid, ws in list(self._clients.items()) if not self._is_ws_alive(ws)]
+        for cid in dead:
+            self._clients.pop(cid, None)
+            self._tokens.pop(cid, None)
+            self._states.pop(cid, None)
+            self._tiers.pop(cid, None)
+            self._credits.pop(cid, None)
+            self._client_sems.pop(cid, None)
+            self._client_locks.pop(cid, None)
+            self._client_last_request_at.pop(cid, None)
+        if not self._clients and not self.http_registry.has_online_session():
+            self._connected.clear()
+
+    def _get_active_connected_clients(self) -> list[str]:
+        self._purge_dead_clients()
+        connected = [cid for cid, ws in self._clients.items() if self._is_ws_alive(ws)]
+        with_tokens = [cid for cid in connected if self._tokens.get(cid)]
+        return sorted(with_tokens if with_tokens else connected)
+
     def _is_free(self, cid) -> bool:
         """Free-tier client? Freemium accounts are spent first so paid/pro
         credits are preserved. Unknown tier is treated as free (spend it early)."""
@@ -152,17 +186,13 @@ class ExtensionBridge:
         if not hasattr(self, "_rr_index"):
             self._rr_index = 0
 
-        connected_ids = sorted(list(self._clients.keys()))
+        connected_ids = self._get_active_connected_clients()
         if not connected_ids:
             return "__http__" if self.http_registry.has_online_session() else None
 
-        # Filter clients with active tokens
-        with_tokens = [cid for cid in connected_ids if self._tokens.get(cid)]
-        pool = with_tokens if with_tokens else connected_ids
-
         # Prioritize idle clients if available
-        idle_pool = [cid for cid in pool if self._states.get(cid) == "idle"]
-        target_pool = idle_pool if idle_pool else pool
+        idle_pool = [cid for cid in connected_ids if self._states.get(cid) == "idle"]
+        target_pool = idle_pool if idle_pool else connected_ids
 
         # True Round-Robin pick
         selected = target_pool[self._rr_index % len(target_pool)]
@@ -179,7 +209,7 @@ class ExtensionBridge:
         if not hasattr(self, "_rr_index"):
             self._rr_index = 0
 
-        connected_ids = sorted(list(self._clients.keys()))
+        connected_ids = self._get_active_connected_clients()
         if not connected_ids:
             return None
 
@@ -570,9 +600,7 @@ class ExtensionBridge:
 
         result = await self._run_api_request(client_id, url_path, body, captcha_action, method, timeout, meta)
 
-        # Self-heal on a stale token: a 401 means Google invalidated this client's
-        # token via inactivity. Force-refresh the tab and retry once on the same
-        # client; if it still 401s, fail over to a different client.
+        # Self-heal on a stale token or failure:
         if self._is_unauthenticated(result):
             log.warning("Client %s returned 401 UNAUTHENTICATED — force-refreshing and retrying", client_id)
             await self._force_refresh_client(client_id)
@@ -583,6 +611,13 @@ class ExtensionBridge:
                 if fallback:
                     log.warning("Client %s still 401 after refresh — failing over to %s", client_id, fallback)
                     result = await self._run_api_request(fallback, url_path, body, captcha_action, method, timeout, meta)
+        elif isinstance(result, dict) and (result.get("error") or result.get("status") in (400, 500, 503)):
+            fallback = self._select_client_excluding(client_id)
+            if fallback:
+                log.warning("Client %s request failed (%s) — auto failing over to %s", client_id, result.get("error") or result.get("status"), fallback)
+                retry_res = await self._run_api_request(fallback, url_path, body, captcha_action, method, timeout, meta)
+                if isinstance(retry_res, dict) and not retry_res.get("error") and retry_res.get("status", 200) < 400:
+                    result = retry_res
         return result
 
     @staticmethod
@@ -601,7 +636,8 @@ class ExtensionBridge:
 
     def _select_client_excluding(self, exclude_id) -> str | None:
         """Pick another connected client with a token, skipping exclude_id."""
-        candidates = sorted([c for c in self._clients if c != exclude_id and self._tokens.get(c)])
+        active = self._get_active_connected_clients()
+        candidates = sorted([c for c in active if c != exclude_id and self._tokens.get(c)])
         if not candidates:
             return None
         selected = candidates[self._rr_index % len(candidates)]

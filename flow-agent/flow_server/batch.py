@@ -166,7 +166,13 @@ def generate_single_item(
 
         except Exception as exc:
             elapsed = round(time.time() - start_t, 1)
-            print(f"[WARN] {name} attempt {attempt} failed ({elapsed}s): {exc}", flush=True)
+            err_detail = ""
+            if hasattr(exc, "read"):
+                try:
+                    err_detail = f" ({exc.read().decode('utf-8', errors='ignore')})"
+                except Exception:
+                    pass
+            print(f"[WARN] {name} attempt {attempt} failed ({elapsed}s): {exc}{err_detail}", flush=True)
             if attempt < max_retries:
                 time.sleep(retry_delay * attempt)
 
