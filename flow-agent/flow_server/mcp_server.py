@@ -160,8 +160,8 @@ def handle_initialize(request_id, params=None):
                 "tools": {}
             },
             "serverInfo": {
-                "name": "flow",
-                "version": "2.0.6"
+                "name": "flow-agent",
+                "version": "2.0.7"
             }
         }
     }
