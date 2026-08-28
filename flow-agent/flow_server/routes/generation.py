@@ -13,7 +13,12 @@ from fastapi import APIRouter, HTTPException, Depends, Header
 from fastapi.responses import JSONResponse
 
 from flow_server.config import OUTPUT_DIR, map_size_to_aspect
-from flow_server.models import ImageGenerationRequest, VideoGenerationRequest, VideoGenerationResult
+from flow_server.models import (
+    ImageGenerationRequest,
+    VideoGenerationRequest,
+    VideoGenerationResult,
+    VideoUpsampleRequest,
+)
 from flow_server.idempotency import get_idempotency_store
 from flow_server.jobs import get_job_store
 from flow_server.history import MediaNotFoundError
@@ -23,8 +28,9 @@ from flow_server.state import verify_api_key, get_active_bridge, publish, append
 
 from flow_engine import DEFAULT_PROJECT
 from flow_engine.bridge import target_client_id_var
-from flow_engine.config import CREDITS_PER_VIDEO
+from flow_engine.config import CREDITS_PER_UPSAMPLE, CREDITS_PER_VIDEO, NATIVE_VIDEO_RESOLUTION
 from flow_engine.generators.t2i import generate_image, download_image
+from flow_engine.generators.upsample import normalise_resolution, upsample_video
 
 # Setup logging (format configured centrally in flow_engine/__init__.py, imported above)
 log = logging.getLogger("flow_engine.openai_api")
@@ -410,11 +416,248 @@ async def get_video_generation(job_id: str):
     return job
 
 
+async def _resolve_upsample_tier(resolution) -> Optional[str]:
+    """Validate a requested delivery resolution, returning the upsample tier."""
+    try:
+        return normalise_resolution(resolution)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+async def _ensure_upsample_credits(active_bridge, tier: str, count: int) -> None:
+    """Refuse a paid upsample the account cannot afford. 1080p is free."""
+    cost_each = CREDITS_PER_UPSAMPLE.get(tier, 0)
+    if cost_each <= 0:
+        return
+    try:
+        cred_res = await active_bridge.api_request(
+            "/v1/credits", body=None, captcha_action=None, method="GET"
+        )
+        cred_data = cred_res.get("data", cred_res) if isinstance(cred_res, dict) else {}
+        balance = int(cred_data.get("credits", 0))
+    except Exception:
+        return
+    if balance < cost_each * count:
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                f"Not enough credits: {balance} left, but {count} {tier} upsample(s) "
+                f"cost {cost_each} each."
+            ),
+        )
+
+
+async def _upsample_and_download(
+    active_bridge,
+    source_media_id: str,
+    aspect_key: str,
+    project_id: str,
+    tier: str,
+    *,
+    prompt: str,
+    seed: Optional[int] = None,
+    index: int = 0,
+):
+    """Run one upsample pass end to end: submit, poll, download, record.
+
+    Returns the new media entry, or raises ValueError with Flow's own message.
+    """
+    media_ids = await upsample_video(
+        active_bridge,
+        source_media_id,
+        aspect_key,
+        project_id,
+        resolution=tier,
+        seed=seed,
+    )
+    if not media_ids:
+        raise ValueError(f"Flow accepted the {tier} upsample but returned no media.")
+
+    from flow_engine.generators.common import poll_status, download_video
+
+    upsampled_id = media_ids[0]
+    if not await poll_status(active_bridge, upsampled_id, project_id):
+        raise ValueError(f"The {tier} upsample of {source_media_id} did not finish.")
+
+    timestamp = int(time.time())
+    filename = f"flow_vid_{timestamp}_{uuid.uuid4().hex[:6]}_{index + 1}_{tier}.mp4"
+    out_path = os.path.join(OUTPUT_DIR, filename)
+    if not await download_video(active_bridge, upsampled_id, out_path):
+        raise ValueError(f"Downloading the {tier} upsample of {upsampled_id} failed.")
+
+    out_path = ensure_correct_extension(out_path)
+    filename = os.path.basename(out_path)
+    served_url, r2_key = await publish(filename, out_path)
+    await append_to_history(
+        "video",
+        served_url,
+        prompt,
+        upsampled_id,
+        r2_key,
+        local_path=out_path,
+        project_id=project_id,
+    )
+    return {
+        "url": served_url,
+        "media_id": upsampled_id,
+        "resolution": tier,
+        "source_media_id": source_media_id,
+    }
+
+
+@router.post(
+    "/v1/videos/upsample",
+    dependencies=[Depends(verify_api_key)],
+    response_model=VideoGenerationResult,
+    responses={202: {"model": VideoGenerationResult, "description": "Upsample is already processing"}},
+)
+async def openai_upsample_video(
+    req: VideoUpsampleRequest,
+    x_client_id: Optional[str] = Header(None, alias="X-Client-Id"),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+):
+    """Upsample an existing Flow video to 1080p or 4K and download the result.
+
+    Flow generates video at 720p; this is the second pass that the Flow UI runs
+    behind its high-resolution download.
+    """
+    x_client_id = _header_string(x_client_id)
+    key = _header_string(idempotency_key)
+    created = int(time.time())
+    job_id = f"upsample_{uuid.uuid4().hex}"
+    idem_store = get_idempotency_store(OUTPUT_DIR)
+    job_store = get_job_store(OUTPUT_DIR)
+
+    if key:
+        claim = await idem_store.claim(
+            key,
+            _request_payload(req, "upsample", x_client_id),
+            job_id=job_id,
+            created=created,
+        )
+        if claim.action == "conflict":
+            raise HTTPException(
+                status_code=409,
+                detail="Idempotency-Key was already used with a different upsample request.",
+            )
+        if claim.action == "replay":
+            return claim.record["response"]
+        if claim.action == "failed":
+            error = claim.record.get("error", {})
+            raise HTTPException(
+                status_code=int(error.get("status_code", 500)),
+                detail=error.get("detail", "The original idempotent upsample failed."),
+            )
+        if claim.action == "processing":
+            existing_job_id = claim.record.get("job_id")
+            existing_job = await job_store.get(existing_job_id) if existing_job_id else None
+            if existing_job and existing_job.get("status") == "succeeded":
+                await idem_store.succeed(key, existing_job)
+                return existing_job
+            if existing_job and existing_job.get("status") == "failed":
+                error = existing_job.get("error", {})
+                await idem_store.fail(
+                    key,
+                    int(error.get("status_code", 500)),
+                    error.get("detail", "The original upsample failed."),
+                )
+                raise HTTPException(
+                    status_code=int(error.get("status_code", 500)),
+                    detail=error.get("detail", "The original upsample failed."),
+                )
+            pending = {
+                "job_id": existing_job_id,
+                "status": "processing",
+                "created": claim.record.get("created") or created,
+                "data": [],
+            }
+            if existing_job_id and not existing_job:
+                await job_store.put(existing_job_id, pending)
+            return JSONResponse(status_code=202, content=pending)
+
+    pending = {"job_id": job_id, "status": "processing", "created": created, "data": []}
+    await job_store.put(job_id, pending)
+
+    try:
+        generated = await _upsample_video(req, x_client_id)
+    except HTTPException as exc:
+        error = {"status_code": exc.status_code, "detail": str(exc.detail)}
+        await job_store.update(job_id, status="failed", error=error)
+        if key:
+            await idem_store.fail(key, exc.status_code, str(exc.detail))
+        raise
+    except Exception as exc:
+        error = {"status_code": 500, "detail": str(exc)}
+        await job_store.update(job_id, status="failed", error=error)
+        if key:
+            await idem_store.fail(key, 500, str(exc))
+        raise
+
+    result = dict(generated)
+    result.update(job_id=job_id, status="succeeded")
+    await job_store.put(job_id, result)
+    if key:
+        await idem_store.succeed(key, result)
+    return result
+
+
+async def _upsample_video(req: VideoUpsampleRequest, x_client_id: Optional[str] = None):
+    """Upsample one finished video to a higher delivery resolution."""
+    target_client_id_var.set(x_client_id)
+    active_bridge = await get_active_bridge()
+    project_id = os.environ.get("DEFAULT_PROJECT", DEFAULT_PROJECT)
+
+    tier = await _resolve_upsample_tier(req.resolution)
+    if tier is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Flow already delivers {NATIVE_VIDEO_RESOLUTION} natively; "
+                "request '1080p' or '4k' to upsample."
+            ),
+        )
+
+    from flow_engine import ASPECTS
+    aspect_key = ASPECTS.get(req.aspect, "VIDEO_ASPECT_RATIO_PORTRAIT")
+
+    try:
+        source_media_id = await resolve_media_reference(
+            req.media_id,
+            active_bridge,
+            expected_type="video",
+            project_id=project_id,
+        )
+    except MediaNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await _ensure_upsample_credits(active_bridge, tier, 1)
+
+    try:
+        entry = await _upsample_and_download(
+            active_bridge,
+            source_media_id,
+            aspect_key,
+            project_id,
+            tier,
+            prompt=f"Upsampled to {tier}",
+            seed=req.seed,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"created": int(time.time()), "data": [entry]}
+
+
 async def _generate_video(req: VideoGenerationRequest, x_client_id: Optional[str] = None):
     """Generate videos from a prompt (and optional start image)."""
     target_client_id_var.set(x_client_id)
     active_bridge = await get_active_bridge()
     project_id = os.environ.get("DEFAULT_PROJECT", DEFAULT_PROJECT)
+
+    # Reject an unusable resolution before anything is paid for.
+    upsample_tier = await _resolve_upsample_tier(req.resolution)
 
     # Credit gate: only allow as many videos as the balance can afford.
     requested_n = req.n
@@ -624,7 +867,11 @@ async def _generate_video(req: VideoGenerationRequest, x_client_id: Optional[str
 
     for r in results:
         if r:
-            data_outputs.append({"url": r["url"], "media_id": r.get("media_id")})
+            data_outputs.append({
+                "url": r["url"],
+                "media_id": r.get("media_id"),
+                "resolution": NATIVE_VIDEO_RESOLUTION,
+            })
             await append_to_history(
                 "video",
                 r["url"],
@@ -638,13 +885,58 @@ async def _generate_video(req: VideoGenerationRequest, x_client_id: Optional[str
     if not data_outputs:
         raise HTTPException(status_code=500, detail="Failed to complete video generations or downloads.")
 
+    notes = []
+    if requested_n != len(data_outputs):
+        notes.append(
+            f"Requested {requested_n} video(s); generated {len(data_outputs)} "
+            f"(each {req.duration}s video costs {cost_each} credits)."
+        )
+
+    # Flow generates at 720p. A higher delivery resolution is a second
+    # upsampler pass over the finished media, so it runs only once every clip
+    # has landed. The 720p originals stay in history and in the response.
+    if upsample_tier:
+        await _ensure_upsample_credits(active_bridge, upsample_tier, len(data_outputs))
+
+        async def upsample_entry(entry, index):
+            source_id = entry.get("media_id")
+            if not source_id:
+                return None, "a generated clip had no media ID to upsample"
+            try:
+                return await _upsample_and_download(
+                    active_bridge,
+                    source_id,
+                    aspect_key,
+                    project_id,
+                    upsample_tier,
+                    prompt=req.prompt,
+                    seed=req.seed,
+                    index=index,
+                ), None
+            except (ValueError, RuntimeError) as exc:
+                log.error("Upsample to %s failed for %s: %s", upsample_tier, source_id, exc)
+                return None, str(exc)
+
+        upsampled = await asyncio.gather(
+            *(upsample_entry(entry, i) for i, entry in enumerate(data_outputs))
+        )
+        high_res = [entry for entry, _ in upsampled if entry]
+        failures = [reason for entry, reason in upsampled if not entry and reason]
+
+        if high_res:
+            # Lead with the upsampled files so clients that consume data[0] as
+            # "the" output write the high-resolution video.
+            data_outputs = high_res + data_outputs
+        if failures:
+            notes.append(
+                f"{len(failures)} clip(s) could not be upsampled to {upsample_tier} and are "
+                f"returned at {NATIVE_VIDEO_RESOLUTION}: {failures[0]}"
+            )
+
     resp = {
         "created": timestamp,
         "data": data_outputs
     }
-    if requested_n != len(data_outputs):
-        resp["note"] = (
-            f"Requested {requested_n} video(s); generated {len(data_outputs)} "
-            f"(each {req.duration}s video costs {cost_each} credits)."
-        )
+    if notes:
+        resp["note"] = " ".join(notes)
     return resp

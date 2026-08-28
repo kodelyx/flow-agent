@@ -413,6 +413,8 @@ def _save_outputs(result, output_path, media_label, *, explicit_output):
         )
         if item.get("media_id"):
             print(f"media_id={item['media_id']}")
+        if item.get("resolution"):
+            print(f"resolution={item['resolution']}")
         saved.append(destination)
     if result.get("note"):
         print(result["note"])
@@ -556,6 +558,17 @@ def cmd_video(argv):
     parser.add_argument("--end", metavar="IMAGE", help="End image path or media ID (use with --start)")
     parser.add_argument("--ref", "-r", nargs="+", metavar="IMAGE", help="Reference image paths or media IDs")
     parser.add_argument("--project-id", "-p", help="Deprecated; configure DEFAULT_PROJECT on the backend")
+    parser.add_argument(
+        "--resolution",
+        "-R",
+        choices=["720p", "1080p", "4k"],
+        default="720p",
+        help=(
+            "Delivery resolution. Flow generates at 720p; 1080p (free) and 4k (paid, "
+            "higher tier) add Flow's upsampler pass and the high-resolution file is "
+            "written to --output."
+        ),
+    )
     parser.add_argument("--idempotency-key", help="Reuse a previous paid request safely")
     args = parser.parse_args(argv)
 
@@ -573,6 +586,8 @@ def cmd_video(argv):
         "duration": args.duration,
         "n": args.count,
     }
+    if args.resolution != "720p":
+        payload["resolution"] = args.resolution
     if args.edit:
         payload.update({"start_media_id": args.edit, "is_video": True})
     elif args.start:
@@ -674,6 +689,46 @@ def cmd_upload(argv):
         print(json.dumps({"path": os.path.abspath(path), **result}, indent=2))
 
 
+def cmd_upsample(argv):
+    parser = argparse.ArgumentParser(
+        prog="flow upsample",
+        description=(
+            "Upsample a finished Flow video to 1080p or 4k — the high-resolution "
+            "pass behind the Flow UI's HD download."
+        ),
+    )
+    parser.add_argument("media_id", help="Flow video media ID, or a local video path tracked in history")
+    parser.add_argument(
+        "--resolution",
+        "-R",
+        choices=["1080p", "4k"],
+        default="1080p",
+        help="Target resolution (1080p is free; 4k costs credits and needs a higher tier)",
+    )
+    parser.add_argument("--aspect", "-a", choices=["portrait", "landscape"], default="landscape")
+    parser.add_argument("--output", "-o", default=None, help="Exact output file path")
+    parser.add_argument("--seed", type=int, help="Optional explicit upsampler seed")
+    parser.add_argument("--idempotency-key", help="Reuse a previous paid request safely")
+    args = parser.parse_args(argv)
+
+    _wait_for_generation_ready()
+    output_path, explicit_output = _requested_output_path(
+        args.output, f"video_{args.resolution}.mp4"
+    )
+    payload = {
+        "media_id": args.media_id,
+        "resolution": args.resolution,
+        "aspect": args.aspect,
+    }
+    if args.seed is not None:
+        payload["seed"] = args.seed
+
+    idempotency_key = args.idempotency_key or uuid.uuid4().hex
+    result = _post_generation("/v1/videos/upsample", payload, idempotency_key, timeout=900)
+    result = _poll_video_job(result, idempotency_key)
+    _save_outputs(result, output_path, "video", explicit_output=explicit_output)
+
+
 def cmd_credits(argv):
     parser = argparse.ArgumentParser(prog="flow credits", description="Show Flow credits.")
     parser.parse_args(argv)
@@ -710,6 +765,7 @@ COMMANDS = {
     "image": cmd_image,
     "batch": cmd_batch,
     "video": cmd_video,
+    "upsample": cmd_upsample,
     "edit": cmd_edit,
     "upload": cmd_upload,
     "credits": cmd_credits,
@@ -727,6 +783,7 @@ def _usage():
     print("  image      Generate images")
     print("  batch      Generate batch images in parallel")
     print("  video      Generate videos")
+    print("  upsample   Upsample a video to 1080p or 4k")
     print("  edit       Edit a video")
     print("  upload     Upload media")
     print("  credits    Show Flow credits")
