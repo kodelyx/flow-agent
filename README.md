@@ -138,16 +138,14 @@ flow video "a dragon flying over mountains" --resolution 4k -o /absolute/path/dr
 ```
 
 Draft quickly, upscale for quality. `--draft` generates at 360p, the faster,
-lower-credit mode Google Flow added with Gemini Omni 1.1 Flash (about half the
-credits of the 720p default):
+lower-credit mode Google Flow added with Gemini Omni 1.1 Flash (~half the
+credits of the 720p default: 4s=4, 6s=5, 8s=6, 10s=7 vs 7/10/12/15):
 
 ```bash
 flow video "a dragon flying over mountains" --draft
 ```
 
-Credit cost per duration: 4s=4, 6s=5, 8s=6, 10s=7 credits at 360p vs 7/10/12/15
-at the 720p default. Draft a concept, then regenerate the keeper with
-`--resolution 1080p` or `--resolution 4k` for the master.
+Draft a concept, then regenerate the keeper with `--resolution 1080p` or `--resolution 4k`.
 
 The upsampled file is written to `--output`; the 720p original stays in the
 output directory and in `history.json`. If the upsample pass fails, the 720p
