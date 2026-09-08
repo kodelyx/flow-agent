@@ -39,6 +39,7 @@ class VideoGenerationRequest(BaseModel):
             "the same step behind the Flow UI's high-resolution download."
         ),
     )
+    draft: Optional[bool] = Field(False, description="Generate a faster, lower-credit 360p draft (model key abra_t2v_{d}s_360p, roughly half the credits)")
 
 
 class VideoUpsampleRequest(BaseModel):

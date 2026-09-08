@@ -558,6 +558,7 @@ def cmd_video(argv):
     parser.add_argument("--end", metavar="IMAGE", help="End image path or media ID (use with --start)")
     parser.add_argument("--ref", "-r", nargs="+", metavar="IMAGE", help="Reference image paths or media IDs")
     parser.add_argument("--project-id", "-p", help="Deprecated; configure DEFAULT_PROJECT on the backend")
+    parser.add_argument("--draft", action="store_true", help="Generate a faster, lower-credit 360p draft (~half the credits)")
     parser.add_argument(
         "--resolution",
         "-R",
@@ -586,6 +587,8 @@ def cmd_video(argv):
         "duration": args.duration,
         "n": args.count,
     }
+    if args.draft:
+        payload["draft"] = True
     if args.resolution != "720p":
         payload["resolution"] = args.resolution
     if args.edit:
