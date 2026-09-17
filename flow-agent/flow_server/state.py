@@ -46,7 +46,7 @@ async def recover_orphan_response(data: dict, meta: dict):
     """
     try:
         if data.get("status") != 200:
-            log.info("Orphan response %s ignored (status=%s)", data.get("id"), data.get("status"))
+            log.info("Orphan response %s ignored (status=%s, data=%s)", data.get("id"), data.get("status"), data.get("data"))
             return
         # Only images arrive inline; videos are polled separately, so only
         # image generations are recoverable this way.

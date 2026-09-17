@@ -400,10 +400,36 @@ class ExtensionBridge:
         except Exception as e:
             log.debug("Force-refresh failed for client %s: %s", client_id, e)
 
-    async def _request_flow_tab(self):
-        """Fallback that triggers open_flow_tab on all connected clients."""
+    async def reload_extensions(self):
+        """Ask all connected extensions to reload themselves."""
         for cid in list(self._clients.keys()):
-            await self._request_flow_tab_for(cid)
+            try:
+                await self.send_message_to(cid, {"method": "reload_extension"})
+            except Exception as e:
+                log.debug("Failed to send reload_extension to client %s: %s", cid, e)
+
+    async def reload_flow_tabs(self):
+        """Ask connected extensions to reload their Flow tabs."""
+        for cid in list(self._clients.keys()):
+            try:
+                await self.send_message_to(cid, {"method": "reload_tabs"})
+            except Exception as e:
+                log.debug("Failed to send reload_tabs to client %s: %s", cid, e)
+
+    async def run_probe(self, probe_type="default", timeout=60):
+        client_id = self._select_client()
+        if not client_id:
+            return {"error": "NO_CLIENT"}
+        req_id = str(uuid.uuid4())
+        future = self._loop.create_future()
+        self._pending[req_id] = future
+        await self.send_message_to(client_id, {"id": req_id, "method": "run_probe", "params": {"probeType": probe_type}})
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        except Exception as e:
+            return {"error": str(e)}
+        finally:
+            self._pending.pop(req_id, None)
 
     async def health_check(self):
         """Quick check if at least one extension is ready with valid token."""

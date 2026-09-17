@@ -101,7 +101,7 @@ API_BASE = "https://aisandbox-pa.googleapis.com"
 CLIENT_CTX = {
     "tool": "PINHOLE",
     "tier": "PAYGATE_TIER_ONE",
-    "origin": "https://labs.google",
+    "origin": "https://flow.google.com",
     "recaptcha_app_type": "RECAPTCHA_APPLICATION_TYPE_WEB",
 }
 

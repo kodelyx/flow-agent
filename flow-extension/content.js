@@ -120,4 +120,29 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
 
   return true; // keep channel open for async reply
 });
+
+// ─── API Fetch Relay ────────────────────────────────────────
+chrome.runtime.onMessage.addListener((msg, _, reply) => {
+  if (msg.type !== 'PROXY_FETCH') return;
+
+  const { url, method, headers, body } = msg;
+  fetch(url, {
+    method: method || 'POST',
+    headers: headers || {},
+    credentials: 'include',
+    body: method === 'GET' ? undefined : (typeof body === 'string' ? body : JSON.stringify(body)),
+  })
+    .then(async (res) => {
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = text; }
+      reply({ ok: res.ok, status: res.status, data, text });
+    })
+    .catch((err) => {
+      reply({ ok: false, error: err.message });
+    });
+
+  return true; // keep channel open for async reply
+});
 }
+

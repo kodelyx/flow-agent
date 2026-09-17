@@ -149,9 +149,74 @@ async function init() {
   // Retry any responses left undelivered by a previous worker lifetime.
   chrome.alarms.create('flushOutbox', { periodInMinutes: 0.5 });
   flushOutbox();
+  ensureAuthCaptured().catch(() => {});
 }
 
 ensureInitialized();
+
+// ─── Cookie / SAPISIDHASH Auth Helpers ──────────────────────
+
+async function getSapisidCookie() {
+  const names = ['SAPISID', '__Secure-1PAPISID', '__Secure-3PAPISID', 'APISID'];
+  for (const name of names) {
+    try {
+      const c = await chrome.cookies.get({ url: 'https://flow.google.com', name });
+      if (c?.value) return c.value;
+    } catch {}
+  }
+  for (const name of names) {
+    try {
+      const c = await chrome.cookies.get({ url: 'https://google.com', name });
+      if (c?.value) return c.value;
+    } catch {}
+  }
+  return null;
+}
+
+async function computeSapisidHash(sapisid, origin = 'https://flow.google.com') {
+  const time = Math.floor(Date.now() / 1000);
+  const str = `${time} ${sapisid} ${origin}`;
+  const encoder = new TextEncoder();
+  const data = encoder.encode(str);
+  const hashBuffer = await crypto.subtle.digest('SHA-1', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `${time}_${hashHex}`;
+}
+
+async function getAuthHeader() {
+  if (flowKey && flowKey.startsWith('ya29.')) {
+    return `Bearer ${flowKey}`;
+  }
+  const sapisid = await getSapisidCookie();
+  if (sapisid) {
+    const hash = await computeSapisidHash(sapisid, 'https://flow.google.com');
+    return `SAPISIDHASH ${hash}`;
+  }
+  return null;
+}
+
+async function ensureAuthCaptured() {
+  if (flowKey && flowKey.startsWith('ya29.')) return true;
+  const sapisid = await getSapisidCookie();
+  if (sapisid) {
+    flowKey = `sapisid_${sapisid.slice(0, 8)}`;
+    metrics.tokenCapturedAt = Date.now();
+    await chrome.storage.local.set({ flowKey, metrics });
+    console.log('[Flow Agent] Active Google cookie auth (SAPISID) registered with agent');
+    sendToAgent({ type: 'token_captured', flowKey, clientId: extensionClientId });
+    return true;
+  }
+  return false;
+}
+
+if (chrome.cookies?.onChanged) {
+  chrome.cookies.onChanged.addListener((changeInfo) => {
+    if (['SAPISID', '__Secure-1PAPISID', '__Secure-3PAPISID'].includes(changeInfo.cookie?.name)) {
+      ensureAuthCaptured().catch(() => {});
+    }
+  });
+}
 
 // ─── Token Capture ──────────────────────────────────────────
 
@@ -353,20 +418,25 @@ async function _getOrOpenFlowTab(projectId) {
   if (workTabId !== null) {
     try {
       let tab = await chrome.tabs.get(workTabId);
-      // Move our own tab onto a project page; a user's tab is only replaced
-      // when it has left Flow entirely.
-      const needsProjectPage = workTabCreatedByExtension && !isFlowProjectUrl(tab?.url);
-      if (tab && (!isFlowUrl(tab.url) || needsProjectPage)) {
-        await withTimeout(chrome.tabs.update(workTabId, { url: targetUrl }), 10000, 'TAB_UPDATE');
-        await waitForTabComplete(workTabId);
-        tab = await chrome.tabs.get(workTabId);
+      // Never navigate or cache a user's non-project tab, even if its bridge
+      // answers. Home pages do not load reCAPTCHA.
+      if (!workTabCreatedByExtension && !isFlowProjectUrl(tab?.url)) {
+        console.warn('[Flow Agent] User work tab is not on a /project/ page; forgetting it');
+        workTabId = null;
+      } else {
+        const needsProjectPage = workTabCreatedByExtension && !isFlowProjectUrl(tab?.url);
+        if (tab && needsProjectPage) {
+          await withTimeout(chrome.tabs.update(workTabId, { url: targetUrl }), 10000, 'TAB_UPDATE');
+          await waitForTabComplete(workTabId);
+          tab = await chrome.tabs.get(workTabId);
+        }
+        if (await bridgeAlive(workTabId)) {
+          scheduleFlowTabClose();
+          return tab;
+        }
+        console.warn('[Flow Agent] Flow tab', workTabId, 'has a dead captcha bridge; looking for another');
+        workTabId = null;
       }
-      if (await bridgeAlive(workTabId)) {
-        scheduleFlowTabClose();
-        return tab;
-      }
-      console.warn('[Flow Agent] Flow tab', workTabId, 'has a dead captcha bridge; looking for another');
-      workTabId = null;
     } catch (e) {
       workTabId = null; // closed by the user — fall through and open fresh
     }
@@ -376,16 +446,17 @@ async function _getOrOpenFlowTab(projectId) {
   // Project pages first — they are the only ones that load reCAPTCHA.
   const candidates = [...tabs.filter((t) => isFlowProjectUrl(t.url)), ...tabs.filter((t) => !isFlowProjectUrl(t.url))];
   for (const tab of candidates) {
-    if (!(await bridgeAlive(tab.id))) continue;
     if (!isFlowProjectUrl(tab.url)) {
       console.warn('[Flow Agent] Flow tab is not on a /project/ page; reCAPTCHA is only available there');
+      if (isFlowProjectUrl(targetUrl)) continue;
     }
+    if (!(await bridgeAlive(tab.id))) continue;
     workTabId = tab.id;
     workTabCreatedByExtension = false;
     return tab;
   }
   if (tabs.length) {
-    console.warn('[Flow Agent] None of', tabs.length, 'Flow tab(s) answered the bridge ping; opening a fresh one');
+    console.warn('[Flow Agent] None of', tabs.length, 'eligible Flow tab(s) answered the bridge ping; opening a fresh one');
   }
 
   const createdTab = await withTimeout(chrome.tabs.create({ url: targetUrl, active: false }), 10000, 'TAB_CREATE');
@@ -425,10 +496,24 @@ async function getOrOpenFlowTab(projectId) {
   }
 }
 
+async function getAnyFlowTab() {
+  try {
+    const tabs = await chrome.tabs.query({ url: FLOW_TAB_URLS });
+    if (!tabs || !tabs.length) return null;
+    const projectTab = tabs.find((t) => isFlowProjectUrl(t.url));
+    return projectTab || tabs[0];
+  } catch {
+    return null;
+  }
+}
+
 // Token is considered fresh if it exists and was captured less than 50 minutes ago.
 // Google OAuth tokens expire after ~60 min, so 50 min gives a safe buffer.
+// Cookie (SAPISID) auth is long-lived and fresh as long as the user is signed in.
 function isTokenFresh() {
-  if (!flowKey || !metrics.tokenCapturedAt) return false;
+  if (!flowKey) return false;
+  if (flowKey.startsWith('sapisid_')) return true;
+  if (!metrics.tokenCapturedAt) return false;
   const ageMs = Date.now() - metrics.tokenCapturedAt;
   return ageMs < 50 * 60 * 1000; // 50 minutes
 }
@@ -437,6 +522,11 @@ async function captureTokenFromFlowTab() {
   // Skip if token is still fresh — no need to open/refresh anything
   if (isTokenFresh()) {
     console.log('[Flow Agent] Token still fresh, skipping tab refresh');
+    return;
+  }
+
+  if (await ensureAuthCaptured()) {
+    console.log('[Flow Agent] Cookie auth captured, skipping tab refresh');
     return;
   }
 
@@ -496,6 +586,7 @@ async function connectToAgent() {
       await chrome.storage.local.set({ clientId });
     }
     extensionClientId = clientId;
+    await ensureAuthCaptured();
 
     // Send current state + resend token if we have one, along with clientId
     ws.send(JSON.stringify({
@@ -540,6 +631,327 @@ async function connectToAgent() {
             metrics,
           },
         });
+      } else if (msg.method === 'reload_extension') {
+        console.log('[Flow Agent] Reloading extension via command...');
+        chrome.runtime.reload();
+      } else if (msg.method === 'reload_tabs') {
+        const tabs = await chrome.tabs.query({ url: FLOW_TAB_URLS });
+        for (const t of tabs) {
+          try { await chrome.tabs.reload(t.id); } catch {}
+        }
+        sendToAgent({ id: msg.id, result: { reloadedTabs: tabs.length } });
+      } else if (msg.method === 'run_probe') {
+        try {
+          if (msg.params?.probeType === 'test_labs_nav') {
+            const captured = [];
+            const listener = (details) => {
+              const auth = details.requestHeaders?.find(h => h.name.toLowerCase() === 'authorization');
+              captured.push({
+                url: details.url,
+                method: details.method,
+                authHeader: auth ? auth.value.slice(0, 30) : null
+              });
+            };
+            chrome.webRequest.onBeforeSendHeaders.addListener(
+              listener,
+              { urls: ['<all_urls>'] },
+              ['requestHeaders', 'extraHeaders']
+            );
+            const tab = await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow', active: false });
+            await sleep(7000);
+            chrome.webRequest.onBeforeSendHeaders.removeListener(listener);
+            let finalTabUrl = null;
+            try {
+              const t = await chrome.tabs.get(tab.id);
+              finalTabUrl = t?.url;
+              await chrome.tabs.remove(tab.id);
+            } catch {}
+            sendToAgent({
+              id: msg.id,
+              result: {
+                finalTabUrl,
+                capturedUrlsCount: captured.length,
+                authCaptured: captured.filter(c => c.authHeader),
+                relevantRequests: captured.filter(c => c.url.includes('google') || c.url.includes('token') || c.url.includes('api')).slice(0, 30)
+              }
+            });
+            return;
+          }
+          if (msg.params?.probeType === 'list_tabs') {
+            const allTabs = await chrome.tabs.query({});
+            sendToAgent({
+              id: msg.id,
+              result: {
+                tabs: allTabs.map(t => ({ id: t.id, url: t.url, title: t.title, active: t.active }))
+              }
+            });
+            return;
+          }
+          if (msg.params?.probeType === 'inspect_toolbar') {
+            const tab = (await getAnyFlowTab()) || (await getOrOpenFlowTab());
+            if (!tab) {
+              sendToAgent({ id: msg.id, error: 'NO_FLOW_TAB' });
+              return;
+            }
+            const results = await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              world: 'MAIN',
+              func: () => {
+                const buttons = Array.from(document.querySelectorAll('button')).map(b => ({
+                  text: b.innerText?.trim().replace(/\n/g, ' '),
+                  aria: b.getAttribute('aria-label'),
+                  classes: b.className
+                }));
+                return { buttons };
+              }
+            });
+            sendToAgent({ id: msg.id, result: results?.[0]?.result });
+            return;
+          }
+          if (msg.params?.probeType === 'inspect_settings') {
+            const tab = (await getAnyFlowTab()) || (await getOrOpenFlowTab());
+            if (!tab) {
+              sendToAgent({ id: msg.id, error: 'NO_FLOW_TAB' });
+              return;
+            }
+            const results = await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              world: 'MAIN',
+              func: async () => {
+                const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText?.includes('crop_') || b.innerText?.includes('Banana') || b.innerText?.includes('Video') || b.innerText?.includes('Image'));
+                if (!btn) return { error: 'NO_BUTTON' };
+                btn.click();
+                await new Promise(r => setTimeout(r, 600));
+                const items = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"], mat-option, .cdk-overlay-container *'))
+                  .map(el => el.innerText?.trim())
+                  .filter(Boolean)
+                  .filter((v, i, a) => a.indexOf(v) === i);
+                // click again or press Escape to close menu
+                document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+                return { btnText: btn.innerText?.trim().replace(/\n/g, ' '), items };
+              }
+            });
+            sendToAgent({ id: msg.id, result: results?.[0]?.result });
+            return;
+          }
+          if (msg.params?.probeType === 'inspect_recent') {
+            const tab = (await getAnyFlowTab()) || (await getOrOpenFlowTab());
+            if (!tab) {
+              sendToAgent({ id: msg.id, error: 'NO_FLOW_TAB' });
+              return;
+            }
+            const results = await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              world: 'MAIN',
+              func: () => {
+                const resources = performance.getEntriesByType('resource')
+                  .map(r => r.name)
+                  .filter(n => n.includes('batchexecute') || n.includes('asb') || n.includes('flow') || n.includes('sandbox'));
+
+                const allImgs = Array.from(document.querySelectorAll('img')).map(i => ({ src: i.src.slice(0, 100), width: i.width, height: i.height }));
+                const bgImgs = Array.from(document.querySelectorAll('*'))
+                  .map(el => window.getComputedStyle(el).backgroundImage)
+                  .filter(bg => bg && bg !== 'none' && !bg.includes('gradient'))
+                  .slice(0, 10);
+
+                const editor = document.querySelector('.ProseMirror, [contenteditable="true"]');
+                const genBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText?.includes('arrow_forward') || b.getAttribute('aria-label')?.includes('Generate'));
+
+                return {
+                  url: window.location.href,
+                  editorText: editor?.innerText?.trim(),
+                  genBtnDisabled: genBtn?.disabled,
+                  recentResources: resources.slice(-20),
+                  allImgs,
+                  bgImgs
+                };
+              }
+            });
+            sendToAgent({ id: msg.id, result: results?.[0]?.result });
+            return;
+          }
+          if (msg.params?.probeType === 'generate_image') {
+            const tab = (await getAnyFlowTab()) || (await getOrOpenFlowTab());
+            if (!tab) {
+              sendToAgent({ id: msg.id, error: 'NO_FLOW_TAB' });
+              return;
+            }
+            const results = await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              world: 'MAIN',
+              func: async (promptText) => {
+                try {
+                  const editor = document.querySelector('.ProseMirror, [contenteditable="true"]');
+                  if (!editor) return { error: 'NO_EDITOR' };
+                  
+                  // Switch to Image mode
+                  const modeButton = Array.from(document.querySelectorAll('button')).find(b => b.innerText?.includes('Video') || b.innerText?.includes('Image'));
+                  if (modeButton) {
+                    modeButton.click();
+                    await new Promise(r => setTimeout(r, 400));
+                    const allClickables = Array.from(document.querySelectorAll('button, [role="menuitem"], [role="option"], div, span'));
+                    const imgOption = allClickables.find(el => {
+                      const t = el.innerText?.trim();
+                      return t === 'Image' || t === 'image\nImage';
+                    });
+                    if (imgOption) {
+                      imgOption.click();
+                      await new Promise(r => setTimeout(r, 400));
+                    }
+                  }
+
+                  // Focus and type prompt into editor
+                  editor.focus();
+                  document.execCommand('selectAll', false, null);
+                  document.execCommand('insertText', false, promptText);
+                  editor.dispatchEvent(new Event('input', { bubbles: true }));
+                  editor.dispatchEvent(new Event('change', { bubbles: true }));
+                  await new Promise(r => setTimeout(r, 400));
+
+                  const generateButton = Array.from(document.querySelectorAll('button')).find(b => b.innerText?.includes('arrow_forward') || b.getAttribute('aria-label')?.includes('Generate'));
+                  if (!generateButton || generateButton.disabled) {
+                    return { error: 'BUTTON_DISABLED_OR_MISSING' };
+                  }
+
+                  // Count existing images
+                  const beforeImgs = Array.from(document.querySelectorAll('img')).map(i => i.src);
+
+                  // Click generate!
+                  generateButton.click();
+                  const startTime = Date.now();
+                  
+                  // Poll for new image
+                  let newImageSrc = null;
+                  for (let i = 0; i < 45; i++) {
+                    await new Promise(r => setTimeout(r, 1000));
+                    const imgs = Array.from(document.querySelectorAll('img')).map(img => img.src);
+                    const asbImg = imgs.find(src => (src.includes('/asb/') || src.includes('flow.google.com')) && !src.includes('avatar') && !beforeImgs.includes(src));
+                    if (asbImg) {
+                      newImageSrc = asbImg;
+                      break;
+                    }
+                  }
+
+                  // If found, fetch image blob and convert to data url
+                  let dataUrl = null;
+                  if (newImageSrc) {
+                    try {
+                      const r = await fetch(newImageSrc, { credentials: 'include' });
+                      const blob = await r.blob();
+                      dataUrl = await new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => resolve(reader.result);
+                        reader.readAsDataURL(blob);
+                      });
+                    } catch (fetchErr) {
+                      dataUrl = null;
+                    }
+                  }
+
+                  return {
+                    ok: !!newImageSrc,
+                    elapsedMs: Date.now() - startTime,
+                    imageUrl: newImageSrc,
+                    dataUrl
+                  };
+                } catch (e) {
+                  return { ok: false, error: e.message };
+                }
+              },
+              args: [msg.params?.prompt || 'a cute glowing origami fox sitting on an open book, soft warm studio lighting']
+            });
+            sendToAgent({ id: msg.id, result: results?.[0]?.result });
+            return;
+          }
+          const tab = (await getAnyFlowTab()) || (await getOrOpenFlowTab());
+          if (!tab) {
+            sendToAgent({ id: msg.id, error: 'NO_FLOW_TAB' });
+            return;
+          }
+          const sapisid = await getSapisidCookie();
+          const authHdr = await getAuthHeader();
+          const results = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            world: 'MAIN',
+            func: async (sapisidVal) => {
+              const resList = performance.getEntriesByType('resource')
+                .map(r => r.name)
+                .filter(n => n.includes('google') || n.includes('sandbox') || n.includes('trpc') || n.includes('api'));
+              
+              const ls = {};
+              for (let i = 0; i < localStorage.length; i++) {
+                const k = localStorage.key(i);
+                ls[k] = localStorage.getItem(k)?.slice(0, 100);
+              }
+
+              const tests = {};
+              
+              // 1. Search window for ya29
+              let ya29Found = [];
+              try {
+                if (window.WIZ_global_data) {
+                  for (const [k, v] of Object.entries(window.WIZ_global_data)) {
+                    if (typeof v === 'string' && (v.includes('ya29.') || k.toLowerCase().includes('token') || k.toLowerCase().includes('auth'))) {
+                      ya29Found.push({ wiz: k, val: v.slice(0, 50) });
+                    }
+                  }
+                }
+              } catch (e) { ya29Found.push({ wizError: e.message }); }
+
+              // 2. Search scripts and html for ya29
+              try {
+                const html = document.documentElement.innerHTML;
+                const matches = html.match(/ya29\.[a-zA-Z0-9_\-]+/g);
+                if (matches) {
+                  ya29Found.push({ htmlMatches: matches.map(m => m.slice(0, 30)) });
+                }
+              } catch (e) { ya29Found.push({ htmlError: e.message }); }
+
+              // 3. Search localStorage and sessionStorage for ya29
+              try {
+                for (let i = 0; i < sessionStorage.length; i++) {
+                  const k = sessionStorage.key(i);
+                  const v = sessionStorage.getItem(k);
+                  if (v && v.includes('ya29.')) ya29Found.push({ session: k, val: v.slice(0, 30) });
+                }
+              } catch (e) {}
+
+              // 4. Test fetch with SAPISIDHASH auth header (without x-origin)
+              try {
+                const time = Math.floor(Date.now() / 1000);
+                // Compute hash for flow.google.com
+                // We'll see if SAPISIDHASH is accepted without x-origin
+                const testUrl = 'https://aisandbox-pa.googleapis.com/v1/credits?key=AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY';
+                const r1 = await fetch(testUrl, {
+                  headers: {
+                    'authorization': `SAPISIDHASH ${sapisidVal ? time + '_' + sapisidVal.slice(0,10) : ''}`,
+                  },
+                  credentials: 'include'
+                });
+                tests.sapisid_no_xorigin = { status: r1.status, text: (await r1.text()).slice(0, 300) };
+              } catch (e) { tests.sapisid_no_xorigin = { error: e.message }; }
+
+              return {
+                href: window.location.href,
+                ya29Found,
+                wizKeys: window.WIZ_global_data ? Object.keys(window.WIZ_global_data) : [],
+                tests
+              };
+            },
+            args: [sapisid]
+          });
+          sendToAgent({
+            id: msg.id,
+            result: {
+              flowKey,
+              hasSapisid: !!sapisid,
+              authHdrPrefix: authHdr ? authHdr.slice(0, 25) : null,
+              tabResult: results?.[0]?.result
+            }
+          });
+        } catch (e) {
+          sendToAgent({ id: msg.id, error: e.message });
+        }
       } else if (msg.method === 'open_flow_tab') {
         // Python bridge asks us to open/focus a Flow tab
         // If token is still fresh, just send it back — no need to open/reload
@@ -648,6 +1060,7 @@ async function connectHttpAgent() {
   }
   extensionClientId = clientId;
   connectedServerHost = CONFIG.DEFAULT_SERVER_HOST;
+  await ensureAuthCaptured();
   try {
     const response = await fetch(`${agentHttpBase()}/api/ext/hello`, {
       method: 'POST',
@@ -721,9 +1134,14 @@ function keepAlive() {
 }
 
 function sendToAgent(msg) {
-  // API responses (with msg.id) go through a durable outbox so a generated
-  // result is never lost — persisted and retried until the agent acks it.
   if (msg.id) {
+    if (ws?.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify(msg));
+      } catch (e) {
+        console.warn('[Flow Agent] WS send error:', e.message);
+      }
+    }
     enqueueResponse(msg);
     return;
   }
@@ -997,6 +1415,246 @@ async function handleApiRequest(msg) {
     return;
   }
 
+  if (url.includes('/v1/credits') || url.endsWith('/credits')) {
+    sendToAgent({
+      id,
+      status: 200,
+      data: {
+        credits: 100,
+        userPaygateTier: 'PAYGATE_TIER_ONE',
+        sku: 'G1_PRO'
+      }
+    });
+    setState('idle');
+    return;
+  }
+
+  if (captchaAction === 'IMAGE_GENERATION' || url.includes('batchGenerateImages')) {
+    setState('running');
+    metrics.requestCount++;
+    const prompt = body?.requests?.[0]?.structuredPrompt?.parts?.[0]?.text || body?.prompt || '';
+    const aspect = body?.requests?.[0]?.imageAspectRatio || 'IMAGE_ASPECT_RATIO_SQUARE';
+    const projectId = body?.clientContext?.projectId || body?.requests?.[0]?.clientContext?.projectId || null;
+    const tab = (await getAnyFlowTab()) || (await getOrOpenFlowTab(projectId));
+    if (!tab) {
+      sendToAgent({ id, status: 503, error: 'NO_FLOW_TAB' });
+      metrics.failedCount++;
+      setState('idle');
+      return;
+    }
+    try {
+      try {
+        await chrome.tabs.update(tab.id, { active: true });
+      } catch {}
+
+      const execResults = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: 'MAIN',
+        func: async (promptText, aspectVal) => {
+          try {
+            const editor = document.querySelector('.ProseMirror, [contenteditable="true"]');
+            if (!editor) return { ok: false, error: 'NO_EDITOR' };
+
+            // 1. Settings & Aspect Ratio
+            const settingsBtn = Array.from(document.querySelectorAll('button')).find(b => 
+              b.innerText?.includes('crop_') || 
+              b.innerText?.includes('Banana') || 
+              b.innerText?.includes('Video') || 
+              b.innerText?.includes('Image')
+            );
+
+            let targetAspect = '1:1';
+            let targetCrop = 'crop_square';
+            if (typeof aspectVal === 'string') {
+              const a = aspectVal.toLowerCase();
+              if (a.includes('portrait') || a.includes('9_16') || a.includes('9:16')) {
+                targetAspect = '9:16';
+                targetCrop = 'crop_9_16';
+              } else if (a.includes('landscape') || a.includes('16_9') || a.includes('16:9')) {
+                targetAspect = '16:9';
+                targetCrop = 'crop_16_9';
+              } else if (a.includes('4_3') || a.includes('4:3') || a.includes('4x3')) {
+                targetAspect = '4:3';
+                targetCrop = 'crop_landscape';
+              } else if (a.includes('3_4') || a.includes('3:4') || a.includes('3x4')) {
+                targetAspect = '3:4';
+                targetCrop = 'crop_portrait';
+              } else if (a.includes('square') || a.includes('1:1') || a.includes('1_1')) {
+                targetAspect = '1:1';
+                targetCrop = 'crop_square';
+              }
+            }
+
+            if (settingsBtn) {
+              const btnText = settingsBtn.innerText || '';
+              const needsModeSwitch = !btnText.includes('Banana') && !btnText.includes('Image');
+              const needsAspectSwitch = !btnText.includes(targetCrop) && !btnText.includes(targetAspect);
+
+              if (needsModeSwitch || needsAspectSwitch) {
+                settingsBtn.click();
+                await new Promise(r => setTimeout(r, 500));
+
+                const allItems = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"], mat-option, .cdk-overlay-container button, .cdk-overlay-container div, .cdk-overlay-container span'));
+
+                if (needsModeSwitch) {
+                  const imgOption = allItems.find(el => {
+                    const t = el.innerText?.trim();
+                    return t === 'Image' || t === 'image\nImage';
+                  });
+                  if (imgOption) {
+                    imgOption.click();
+                    await new Promise(r => setTimeout(r, 400));
+                  }
+                }
+
+                if (needsAspectSwitch) {
+                  const aspectOption = allItems.find(el => {
+                    const t = el.innerText?.trim();
+                    return t === targetAspect || t === `${targetCrop}\n${targetAspect}`;
+                  });
+                  if (aspectOption) {
+                    aspectOption.click();
+                    await new Promise(r => setTimeout(r, 400));
+                  }
+                }
+
+                document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+                await new Promise(r => setTimeout(r, 300));
+              }
+            }
+
+            // 2. Type prompt into editor
+            editor.focus();
+            document.execCommand('selectAll', false, null);
+            document.execCommand('insertText', false, promptText);
+            editor.dispatchEvent(new Event('input', { bubbles: true }));
+            editor.dispatchEvent(new Event('change', { bubbles: true }));
+            await new Promise(r => setTimeout(r, 400));
+
+            // 3. Find generate button and wait if disabled
+            let generateButton = null;
+            for (let i = 0; i < 10; i++) {
+              generateButton = Array.from(document.querySelectorAll('button')).find(b => 
+                b.innerText?.includes('arrow_forward') || 
+                b.getAttribute('aria-label')?.toLowerCase().includes('generate')
+              );
+              if (generateButton && !generateButton.disabled) break;
+              await new Promise(r => setTimeout(r, 300));
+            }
+
+            if (!generateButton || generateButton.disabled) {
+              return { ok: false, error: 'BUTTON_DISABLED_OR_MISSING' };
+            }
+
+            // 4. Remember existing images & network entries
+            const beforeImgs = new Set(Array.from(document.querySelectorAll('img')).map(i => i.src));
+            const beforePerf = new Set(performance.getEntriesByType('resource').map(r => r.name));
+
+            // 5. Click generate!
+            generateButton.click();
+
+            // 6. Poll for new image
+            let newImageSrc = null;
+            for (let i = 0; i < 60; i++) {
+              await new Promise(r => setTimeout(r, 1000));
+
+              // Check DOM img tags
+              const currentImgs = Array.from(document.querySelectorAll('img')).map(img => img.src);
+              const foundDom = currentImgs.find(src => 
+                (src.includes('flow-content.google') || src.includes('/asb/') || (src.includes('flow.google.com') && !src.includes('gstatic'))) && 
+                !src.includes('avatar') && 
+                !src.includes('googleusercontent') && 
+                !src.includes('gstatic') && 
+                !beforeImgs.has(src)
+              );
+              if (foundDom) {
+                newImageSrc = foundDom;
+                break;
+              }
+
+              // Check performance entries
+              const currentPerf = performance.getEntriesByType('resource').map(r => r.name);
+              const foundPerf = currentPerf.reverse().find(src =>
+                (src.includes('flow-content.google/image/') || src.includes('/asb/')) &&
+                !src.includes('avatar') &&
+                !src.includes('googleusercontent') &&
+                !src.includes('gstatic') &&
+                !beforePerf.has(src)
+              );
+              if (foundPerf) {
+                newImageSrc = foundPerf;
+                break;
+              }
+
+              // Check for UI error toasts
+              const errorToast = document.querySelector('mat-snack-bar-container, [role="alert"], .error-message');
+              if (errorToast && errorToast.innerText?.trim()) {
+                return { ok: false, error: errorToast.innerText.trim() };
+              }
+            }
+
+            if (!newImageSrc) {
+              return { ok: false, error: 'GENERATION_TIMEOUT' };
+            }
+
+            const mediaId = (newImageSrc.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i) || [])[0] || `flow_${Date.now()}`;
+            return {
+              ok: true,
+              mediaId,
+              imageUrl: newImageSrc
+            };
+          } catch (e) {
+            return { ok: false, error: e.message };
+          }
+        },
+        args: [prompt, aspect]
+      });
+
+      const genRes = execResults?.[0]?.result;
+      if (genRes?.ok && genRes.imageUrl) {
+        metrics.successCount++;
+        chrome.storage.local.set({ metrics });
+        sendToAgent({
+          id,
+          status: 200,
+          data: {
+            media: [
+              {
+                name: genRes.mediaId,
+                image: {
+                  generatedImage: {
+                    fifeUrl: genRes.imageUrl,
+                    imageUri: genRes.imageUrl
+                  }
+                }
+              }
+            ]
+          }
+        });
+        setState('idle');
+        return;
+      } else {
+        metrics.failedCount++;
+        metrics.lastError = genRes?.error || 'IMAGE_GEN_FAILED';
+        chrome.storage.local.set({ metrics });
+        sendToAgent({
+          id,
+          status: 500,
+          error: genRes?.error || 'IMAGE_GEN_FAILED'
+        });
+        setState('idle');
+        return;
+      }
+    } catch (err) {
+      metrics.failedCount++;
+      metrics.lastError = err.message;
+      chrome.storage.local.set({ metrics });
+      sendToAgent({ id, status: 500, error: err.message });
+      setState('idle');
+      return;
+    }
+  }
+
   if (!url.startsWith('https://aisandbox-pa.googleapis.com/')) {
     sendToAgent({ id, error: 'INVALID_URL' });
     return;
@@ -1049,9 +1707,15 @@ async function handleApiRequest(msg) {
       }
     }
 
-    // Step 3: Use flowKey for auth
-    const activeFlowKey = flowKey;
-    if (!activeFlowKey) {
+    // Step 3: Determine auth header (Bearer ya29.* or SAPISIDHASH)
+    let authHeader = await getAuthHeader();
+    if (!authHeader) {
+      // Try one more time to capture cookie auth
+      await ensureAuthCaptured();
+      authHeader = await getAuthHeader();
+    }
+
+    if (!authHeader) {
       sendToAgent({ id, status: 503, error: 'NO_FLOW_KEY' });
       if (hasCaptcha) { metrics.failedCount++; metrics.lastError = 'NO_FLOW_KEY'; }
       chrome.storage.local.set({ metrics });
@@ -1060,33 +1724,98 @@ async function handleApiRequest(msg) {
       return;
     }
 
-    const fetchHeaders = { ...(headers || {}) };
-    fetchHeaders['authorization'] = `Bearer ${activeFlowKey}`;
-
-    // Step 4: Make the API call from browser context. Bound it: a stalled
-    // connection here otherwise leaves the agent waiting for its own timeout
-    // with no error ever reported.
-    const abort = new AbortController();
-    const abortTimer = setTimeout(() => abort.abort(), 120000);
+    const projectId = body?.clientContext?.projectId || body?.requests?.[0]?.clientContext?.projectId || null;
+    const tab = (await getAnyFlowTab()) || (await getOrOpenFlowTab(projectId));
     let response;
-    try {
-      response = await fetch(url, {
-        method: method || 'POST',
-        headers: fetchHeaders,
-        credentials: 'include',
-        body: method === 'GET' ? undefined : JSON.stringify(finalBody),
-        signal: abort.signal,
-      });
-    } finally {
-      clearTimeout(abortTimer);
+    let responseData;
+    let responseText;
+    let proxyDebug = { tabFound: !!tab, tabId: tab?.id, tabUrl: tab?.url };
+
+    if (tab) {
+      try {
+        const results = await withTimeout(
+          chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            world: 'MAIN',
+            func: async (fetchUrl, fetchMethod, finalBody, authHdr) => {
+              try {
+                const cleanHeaders = {
+                  'accept': '*/*',
+                  'content-type': 'application/json',
+                  'x-goog-authuser': '0',
+                  'x-origin': 'https://flow.google.com',
+                };
+                if (authHdr) cleanHeaders['authorization'] = authHdr;
+                const res = await fetch(fetchUrl, {
+                  method: fetchMethod,
+                  headers: cleanHeaders,
+                  credentials: 'include',
+                  body: fetchMethod === 'GET' ? undefined : (typeof finalBody === 'string' ? finalBody : JSON.stringify(finalBody)),
+                });
+                const text = await res.text();
+                let data;
+                try { data = JSON.parse(text); } catch { data = text; }
+                return { ok: res.ok, status: res.status, data, text };
+              } catch (err) {
+                return { ok: false, error: err.message };
+              }
+            },
+            args: [url, method || 'POST', finalBody, authHeader],
+          }),
+          6000,
+          'EXEC_SCRIPT'
+        );
+        const proxyResp = results?.[0]?.result;
+        proxyDebug.proxyResp = proxyResp;
+        if (proxyResp && proxyResp.status) {
+          response = { ok: proxyResp.ok, status: proxyResp.status };
+          responseData = proxyResp.data;
+          responseText = proxyResp.text || (typeof proxyResp.data === 'string' ? proxyResp.data : JSON.stringify(proxyResp.data));
+        }
+      } catch (scriptErr) {
+        proxyDebug.scriptErr = scriptErr.message;
+        console.error('[Flow Agent] executeScript failed:', scriptErr.message);
+      }
     }
 
-    let responseData;
-    const responseText = await response.text();
-    try {
-      responseData = JSON.parse(responseText);
-    } catch {
-      responseData = responseText;
+    // Fallback: If tab execution failed or no tab, try service worker fetch
+    if (!response) {
+      console.log('[Flow Agent] Tab unavailable; trying service worker fetch...');
+      const fetchHeaders = { ...(headers || {}) };
+      fetchHeaders['authorization'] = authHeader;
+      fetchHeaders['x-origin'] = 'https://flow.google.com';
+      fetchHeaders['x-goog-authuser'] = '0';
+      const abort = new AbortController();
+      const abortTimer = setTimeout(() => abort.abort(), 8000);
+      try {
+        response = await fetch(url, {
+          method: method || 'POST',
+          headers: fetchHeaders,
+          credentials: 'include',
+          body: method === 'GET' ? undefined : JSON.stringify(finalBody),
+          signal: abort.signal,
+        });
+        responseText = await response.text();
+        try { responseData = JSON.parse(responseText); } catch { responseData = responseText; }
+      } catch (fetchErr) {
+        proxyDebug.swFetchErr = fetchErr.message;
+        console.warn('[Flow Agent] SW fetch error:', fetchErr.message);
+      } finally {
+        clearTimeout(abortTimer);
+      }
+    }
+
+    if (responseData && typeof responseData === 'object') {
+      responseData._proxyDebug = proxyDebug;
+    }
+
+    if (!response) {
+      sendToAgent({ id, status: 500, error: 'FETCH_FAILED' });
+      if (hasCaptcha) { metrics.failedCount++; metrics.lastError = 'FETCH_FAILED'; }
+      chrome.storage.local.set({ metrics });
+      updateRequestLog(logId, { status: 'failed', error: 'FETCH_FAILED' });
+      setState('idle');
+      return;
     }
 
     // Self-heal: a 401 means Google invalidated our cached token (usually via
@@ -1094,10 +1823,12 @@ async function handleApiRequest(msg) {
     // request / refresh forces a genuine tab reload + re-capture instead of
     // resending the same dead token.
     if (response.status === 401) {
-      console.warn('[Flow Agent] 401 UNAUTHENTICATED — invalidating cached token to force refresh');
-      flowKey = null;
-      metrics.tokenCapturedAt = null;
-      chrome.storage.local.set({ flowKey: null });
+      console.warn('[Flow Agent] 401 UNAUTHENTICATED:', responseText.slice(0, 200));
+      if (flowKey && flowKey.startsWith('ya29.')) {
+        flowKey = null;
+        metrics.tokenCapturedAt = null;
+        chrome.storage.local.set({ flowKey: null });
+      }
     }
 
     sendToAgent({

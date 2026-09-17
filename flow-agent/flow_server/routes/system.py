@@ -180,6 +180,24 @@ async def root():
     return {"status": "running", "service": "Flow Agent API"}
 
 
+@router.post("/api/dev/reload")
+async def dev_reload():
+    bridge = state.get_bridge()
+    if bridge:
+        await bridge.reload_extensions()
+        return {"ok": True}
+    return {"ok": False}
+
+
+@router.post("/api/dev/probe")
+async def dev_probe(probe_type: str = "default"):
+    bridge = state.get_bridge()
+    if bridge:
+        res = await bridge.run_probe(probe_type)
+        return res
+    return {"error": "Bridge not running"}
+
+
 # Health Check
 @router.get("/health")
 async def health():
