@@ -137,7 +137,9 @@ async function init() {
   }
   await chrome.storage.local.remove('customServerIp');
   const data = await chrome.storage.local.get(['flowKey', 'metrics', 'callbackSecret', 'callbackUrl', 'requestLog']);
-  if (data.flowKey) flowKey = data.flowKey;
+  // Only a real bearer or a verified flow session counts; anything else in
+  // storage is a stale experiment and must not be reported as a token.
+  if (data.flowKey && (data.flowKey.startsWith('ya29.') || data.flowKey === FLOW_SESSION_KEY)) flowKey = data.flowKey;
   if (data.metrics) Object.assign(metrics, data.metrics);
   if (data.callbackSecret) callbackSecret = data.callbackSecret;
   if (data.callbackUrl) callbackUrl = normalizeCallbackUrl(data.callbackUrl);
@@ -446,6 +448,9 @@ async function captureTokenFromFlowTab() {
     return;
   }
 
+  // flow.google.com: no bearer exists; a verified cookie session is the token.
+  if (await ensureFlowSession()) return;
+
   if (_openingFlowTab) {
     console.log('[Flow Agent] Flow tab already opening, skipping');
     return;
@@ -546,12 +551,17 @@ async function connectToAgent() {
             metrics,
           },
         });
+      } else if (msg.method === 'reload_extension') {
+        console.log('[Flow Agent] Reloading extension on agent request');
+        chrome.runtime.reload();
       } else if (msg.method === 'open_flow_tab') {
         // Python bridge asks us to open/focus a Flow tab
         // If token is still fresh, just send it back — no need to open/reload
         if (isTokenFresh()) {
           console.log('[Flow Agent] open_flow_tab: token fresh, sending cached token');
           sendToAgent({ type: 'token_captured', flowKey, clientId: extensionClientId });
+        } else if (await ensureFlowSession()) {
+          console.log('[Flow Agent] open_flow_tab: flow session verified');
         } else {
           console.log('[Flow Agent] open_flow_tab: token missing/expired, opening tab');
           // Reloading an existing flow.google.com tab never yields a bearer —
@@ -1003,6 +1013,14 @@ async function handleApiRequest(msg) {
     return;
   }
 
+  // flow.google.com no longer talks to aisandbox-pa; these calls are served
+  // by the page's own batchexecute RPCs instead (see handleFlowRpcRequest).
+  const rpcKind = classifyFlowRpc(url);
+  if (rpcKind) {
+    await handleFlowRpcRequest(msg, rpcKind);
+    return;
+  }
+
   if (!url.startsWith('https://aisandbox-pa.googleapis.com/')) {
     sendToAgent({ id, error: 'INVALID_URL' });
     return;
@@ -1057,6 +1075,17 @@ async function handleApiRequest(msg) {
 
     // Step 3: Use flowKey for auth
     const activeFlowKey = flowKey;
+    if (activeFlowKey === FLOW_SESSION_KEY) {
+      // Cookie session only — aisandbox-pa rejects it (XD3). Endpoints not yet
+      // mapped to a batchexecute RPC cannot work on flow.google.com.
+      const err = `NOT_SUPPORTED_ON_FLOW_GOOGLE_COM: ${_classifyApiUrl(url)}`;
+      sendToAgent({ id, status: 501, error: err });
+      if (hasCaptcha) { metrics.failedCount++; metrics.lastError = err; }
+      chrome.storage.local.set({ metrics });
+      updateRequestLog(logId, { status: 'failed', error: err });
+      setState('idle');
+      return;
+    }
     if (!activeFlowKey) {
       sendToAgent({ id, status: 503, error: 'NO_FLOW_KEY' });
       if (hasCaptcha) { metrics.failedCount++; metrics.lastError = 'NO_FLOW_KEY'; }
@@ -1139,6 +1168,9 @@ async function handleGetMediaUrl(msg) {
   const mediaId = params?.media_id;
   if (!mediaId) { sendToAgent({ id, error: 'MISSING_MEDIA_ID' }); return; }
   try {
+    // Media generated through batchexecute: signed URL comes from as29s.
+    const signed = await resolveFlowMediaUrl(mediaId);
+    if (signed) { sendToAgent({ id, status: 200, result: { url: signed } }); return; }
     const url = new URL('https://labs.google/fx/api/trpc/media.getMediaUrlRedirect');
     url.searchParams.set('name', mediaId);
     const response = await fetch(url.toString(), { credentials: 'include', redirect: 'follow' });
@@ -1146,6 +1178,318 @@ async function handleGetMediaUrl(msg) {
     sendToAgent({ id, status: 200, result: { url: response.url } });
   } catch (error) {
     sendToAgent({ id, error: `MEDIA_URL_FAILED: ${error.message}` });
+  }
+}
+
+// ─── flow.google.com batchexecute RPCs ──────────────────────
+//
+// The Angular frontend on flow.google.com does not call aisandbox-pa; it
+// talks to /_/AiSandboxAngularFrontend/data/batchexecute with cookie auth
+// plus a per-page CSRF token (WIZ_global_data.SNlM0e). The RPCs below were
+// captured from a real session on 2026-09-18 and are replayed from inside a
+// Flow tab (MAIN world) so cookies, CSRF and origin all line up. Results are
+// mapped back into the aisandbox-pa REST shapes the Python side still parses.
+//
+//   YhhmEf  submit text-to-video   -> [null, credits, [[mediaId, ...]], [[opId, projectId, mediaId, "CAE", ...]]]
+//   jwpduf  poll   [null,null,[[opId]]] -> [null, credits, [[record]]]; record[5][8][0] = status (6 queued, 2 running, 3 done)
+//   as29s   result ["opId"]        -> record incl. signed flow-content.google/video/<opId> URL
+//   nzlxg   credits []             -> [credits, ...]
+//   ogiZ0b  generate image (sync, ~25 s) -> [[[mediaId, null, sceneId, ..., [[...,"<signed image url>",aspect,...], null, [w,h]]]], ...]
+
+const FLOW_VIDEO_ASPECT = { VIDEO_ASPECT_RATIO_PORTRAIT: 1, VIDEO_ASPECT_RATIO_LANDSCAPE: 2 };
+// Verified by generating one image per enum and reading the returned [w,h].
+const FLOW_IMAGE_ASPECT = {
+  IMAGE_ASPECT_RATIO_SQUARE: 1,     // 1024x1024
+  IMAGE_ASPECT_RATIO_PORTRAIT: 2,   // 768x1376
+  IMAGE_ASPECT_RATIO_LANDSCAPE: 3,  // 1376x768
+  IMAGE_ASPECT_RATIO_3_4: 4,        // 896x1200
+  IMAGE_ASPECT_RATIO_4_3: 5,        // 1200x896
+};
+// flowKey value reported to the agent once the cookie session has been proven
+// by a real RPC. The agent only routes work to clients that reported a key;
+// there is no bearer to capture on flow.google.com any more.
+const FLOW_SESSION_KEY = 'flow-session';
+const FLOW_STATUS_DONE = 3;
+const FLOW_STATUS_PENDING = new Set([0, 1, 2, 6]);
+// opId -> signed video URL, filled in as polls complete.
+const flowMediaUrls = new Map();
+
+function classifyFlowRpc(url) {
+  if (url.includes('/v1/credits') || url.endsWith('/credits')) return 'credits';
+  if (url.includes('batchAsyncGenerateVideoText')) return 't2v';
+  if (url.includes('batchCheckAsyncVideoGenerationStatus')) return 'poll';
+  if (url.includes('batchGenerateImages')) return 'image';
+  return null;
+}
+
+// Prove the cookie session with a credits call and tell the agent about it.
+// Replaces bearer capture on flow.google.com; the marker expires like a token
+// (isTokenFresh) so it is re-proven periodically.
+let _ensuringSession = null;
+async function ensureFlowSession(force = false) {
+  if (!force && flowKey === FLOW_SESSION_KEY && isTokenFresh()) return true;
+  if (_ensuringSession) return _ensuringSession;
+  _ensuringSession = (async () => {
+    try {
+      const tab = await flowTabFor(null);
+      if (!tab) return false;
+      const res = await flowRpc(tab.id, 'nzlxg', [], null);
+      if (!res.ok) {
+        console.warn('[Flow Agent] Flow session check failed:', res.error);
+        return false;
+      }
+      flowKey = FLOW_SESSION_KEY;
+      metrics.tokenCapturedAt = Date.now();
+      await chrome.storage.local.set({ flowKey, metrics });
+      console.log('[Flow Agent] Flow session verified (credits:', res.data?.[0], ')');
+      sendToAgent({ type: 'token_captured', flowKey, clientId: extensionClientId });
+      return true;
+    } catch (e) {
+      console.warn('[Flow Agent] Flow session check error:', e.message);
+      return false;
+    } finally {
+      _ensuringSession = null;
+    }
+  })();
+  return _ensuringSession;
+}
+
+// Old keys (abra_t2v_8s) and new ones (veo_3_1_t2v_fast) both map onto the
+// new frontend's model keys; portrait is a distinct key with a suffix.
+function flowVideoModelKey(requested, aspect) {
+  let base = 'veo_3_1_t2v_fast';
+  const r = (requested || '').toLowerCase();
+  if (r.includes('veo_3_1_t2v')) base = r.replace(/_portrait$/, '');
+  else if (r.includes('quality')) base = 'veo_3_1_t2v';
+  else if (r.includes('lite')) base = 'veo_3_1_t2v_lite';
+  return aspect === 'VIDEO_ASPECT_RATIO_PORTRAIT' ? `${base}_portrait` : base;
+}
+
+// Runs inside the Flow tab. Self-contained: executeScript serialises it.
+function pageFlowRpc(rpcId, arg, sourcePath) {
+  return (async () => {
+    try {
+      const w = window.WIZ_global_data || {};
+      if (!w.SNlM0e) return { ok: false, error: 'NO_CSRF_TOKEN' };
+      const q = new URLSearchParams({
+        rpcids: rpcId,
+        'source-path': sourcePath,
+        bl: w.cfb2h || '',
+        'f.sid': w.FdrFJe || '',
+        hl: w.GWsdKe || 'en',
+        _reqid: String(Math.floor(Math.random() * 900000) + 100000),
+        rt: 'c',
+      });
+      const body = new URLSearchParams({
+        'f.req': JSON.stringify([[[rpcId, JSON.stringify(arg), null, 'generic']]]),
+        at: w.SNlM0e,
+      });
+      const res = await fetch(`https://flow.google.com/_/AiSandboxAngularFrontend/data/batchexecute?${q}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+          'x-same-domain': '1',
+        },
+        body: body.toString(),
+      });
+      const text = await res.text();
+      for (const line of text.split('\n')) {
+        if (!line.startsWith('[[')) continue;
+        let frames;
+        try { frames = JSON.parse(line); } catch { continue; }
+        for (const f of frames) {
+          if (!Array.isArray(f) || f[0] !== 'wrb.fr' || f[1] !== rpcId) continue;
+          if (typeof f[2] === 'string') return { ok: true, status: res.status, data: JSON.parse(f[2]) };
+          return { ok: false, status: res.status, error: `RPC_ERROR ${JSON.stringify(f.slice(3)).slice(0, 300)}` };
+        }
+      }
+      return { ok: false, status: res.status, error: `NO_FRAME ${text.slice(0, 200)}` };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  })();
+}
+
+async function flowRpc(tabId, rpcId, arg, projectId) {
+  const results = await withTimeout(
+    chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: pageFlowRpc,
+      args: [rpcId, arg, projectId ? `/project/${projectId}` : '/'],
+    }),
+    60000,
+    `FLOW_RPC_${rpcId}`,
+  );
+  return results?.[0]?.result || { ok: false, error: 'NO_RESULT' };
+}
+
+function findFlowUrl(node, kind) {
+  if (typeof node === 'string') return node.includes(`flow-content.google/${kind}/`) ? node : null;
+  if (Array.isArray(node)) {
+    for (const v of node) { const hit = findFlowUrl(v, kind); if (hit) return hit; }
+  }
+  return null;
+}
+
+async function flowTabFor(projectId) {
+  return (await getAnyFlowTab()) || (await getOrOpenFlowTab(projectId));
+}
+
+async function resolveFlowMediaUrl(mediaId) {
+  if (flowMediaUrls.has(mediaId)) return flowMediaUrls.get(mediaId);
+  const tab = await flowTabFor(null);
+  if (!tab) return null;
+  const res = await flowRpc(tab.id, 'as29s', [mediaId], null);
+  const url = res.ok ? (findFlowUrl(res.data, 'video') || findFlowUrl(res.data, 'image')) : null;
+  if (url) flowMediaUrls.set(mediaId, url);
+  return url;
+}
+
+function flowStatusString(code) {
+  if (code === FLOW_STATUS_DONE) return 'MEDIA_GENERATION_STATUS_SUCCESSFUL';
+  if (FLOW_STATUS_PENDING.has(code)) return 'MEDIA_GENERATION_STATUS_ACTIVE';
+  return `MEDIA_GENERATION_STATUS_FAILED_${code}`;
+}
+
+async function handleFlowRpcRequest(msg, kind) {
+  const { id, params } = msg;
+  const { url, body, captchaAction } = params;
+  const projectId = body?.clientContext?.projectId || body?.requests?.[0]?.clientContext?.projectId || body?.media?.[0]?.projectId || null;
+  const logType = _classifyApiUrl(url);
+  const visible = _VISIBLE_TYPES.has(logType);
+  if (visible) {
+    addRequestLog({ id, type: logType, time: new Date().toISOString(), status: 'processing', error: null, outputUrl: null, url, payloadSummary: body ? JSON.stringify(body).slice(0, 200) : null });
+  }
+  const fail = (status, error) => {
+    console.warn('[Flow Agent] flow rpc', kind, 'failed:', error);
+    sendToAgent({ id, status, error });
+    if (kind === 't2v' || kind === 'image') { metrics.failedCount++; metrics.lastError = error; chrome.storage.local.set({ metrics }); }
+    if (visible) updateRequestLog(id, { status: 'failed', error });
+    setState('idle');
+  };
+
+  setState('running');
+  try {
+    const tab = await flowTabFor(projectId);
+    if (!tab) return fail(503, 'NO_FLOW_TAB');
+
+    if (kind === 'credits') {
+      const res = await flowRpc(tab.id, 'nzlxg', [], projectId);
+      if (!res.ok) return fail(res.status || 500, res.error);
+      const credits = Array.isArray(res.data) ? res.data[0] : null;
+      sendToAgent({ id, status: 200, data: { credits, userPaygateTier: 'PAYGATE_TIER_ONE', sku: 'G1_PRO' } });
+      setState('idle');
+      return;
+    }
+
+    if (kind === 'poll') {
+      const media = [];
+      let credits;
+      for (const m of body?.media || []) {
+        const res = await flowRpc(tab.id, 'jwpduf', [null, null, [[m.name]]], projectId || m.projectId);
+        if (!res.ok) return fail(res.status || 500, res.error);
+        credits = res.data?.[1];
+        const record = res.data?.[2]?.[0];
+        const code = record?.[5]?.[8]?.[0];
+        const videoUrl = findFlowUrl(record, 'video');
+        if (videoUrl) flowMediaUrls.set(m.name, videoUrl);
+        const status = videoUrl ? 'MEDIA_GENERATION_STATUS_SUCCESSFUL' : flowStatusString(code);
+        media.push({ name: m.name, mediaMetadata: { mediaStatus: { mediaGenerationStatus: status } } });
+      }
+      sendToAgent({ id, status: 200, data: { media, remainingCredits: credits } });
+      setState('idle');
+      return;
+    }
+
+    if (kind === 'image') {
+      metrics.requestCount++;
+      const items = body?.requests || [];
+      if (items.some((r) => r?.imageInputs?.length)) {
+        return fail(501, 'NOT_SUPPORTED: reference images are not wired to the flow.google.com RPC yet');
+      }
+      const uuid = () => crypto.randomUUID().toUpperCase();
+      // One ogiZ0b call per requested image, in parallel; each needs its own
+      // reCAPTCHA token.
+      const results = await Promise.all(items.map(async (req, i) => {
+        const prompt = req?.structuredPrompt?.parts?.map((p) => p.text).join('\n') || '';
+        const aspectEnum = FLOW_IMAGE_ASPECT[req?.imageAspectRatio] || FLOW_IMAGE_ASPECT.IMAGE_ASPECT_RATIO_LANDSCAPE;
+        const model = req?.imageModelName || 'NARWHAL';
+        const seed = Number.isInteger(req?.seed) ? req.seed : Math.floor(Math.random() * 1000000);
+        const captchaResult = await solveCaptcha(`${id}-${i}`, captchaAction || 'IMAGE_GENERATION', projectId);
+        const token = captchaResult?.token;
+        if (!token) return { ok: false, error: `CAPTCHA_FAILED: ${captchaResult?.error || 'no token'}` };
+        const ctx = [null, 22, null, null, null, projectId, null, null, null, null, [token, 1]];
+        const arg = [null, [[null, null, null, seed, aspectEnum, model, null, ctx, [[[prompt]]], null, null, null, uuid(), uuid()]], 1, ctx, [uuid()]];
+        console.log('[Flow Agent] ogiZ0b submit', model, req?.imageAspectRatio, 'project', projectId);
+        const res = await flowRpc(tab.id, 'ogiZ0b', arg, projectId);
+        if (!res.ok) return res;
+        const imageUrl = findFlowUrl(res.data, 'image');
+        if (!imageUrl) return { ok: false, error: `NO_IMAGE_URL ${JSON.stringify(res.data).slice(0, 200)}` };
+        const mediaId = res.data?.[0]?.[0]?.[0] || (imageUrl.match(/image\/([0-9a-f-]{36})/) || [])[1];
+        flowMediaUrls.set(mediaId, imageUrl);
+        return { ok: true, mediaId, imageUrl };
+      }));
+      const bad = results.find((r) => !r.ok);
+      if (bad) return fail(bad.status || 500, bad.error);
+      metrics.successCount++;
+      metrics.lastError = null;
+      chrome.storage.local.set({ metrics });
+      const media = results.map((r) => ({ name: r.mediaId, image: { generatedImage: { fifeUrl: r.imageUrl } } }));
+      if (visible) updateRequestLog(id, { status: 'success', httpStatus: 200, outputUrl: results[0].imageUrl, responseSummary: JSON.stringify(media.map((m) => m.name)) });
+      sendToAgent({ id, status: 200, data: { media } });
+      setState('idle');
+      return;
+    }
+
+    // kind === 't2v'
+    metrics.requestCount++;
+    const media = [];
+    let credits;
+    for (const req of body?.requests || []) {
+      const prompt = req?.textInput?.structuredPrompt?.parts?.map((p) => p.text).join('\n') || '';
+      const aspect = req?.aspectRatio || 'VIDEO_ASPECT_RATIO_LANDSCAPE';
+      const modelKey = flowVideoModelKey(req?.videoModelKey, aspect);
+      const aspectEnum = FLOW_VIDEO_ASPECT[aspect] || FLOW_VIDEO_ASPECT.VIDEO_ASPECT_RATIO_LANDSCAPE;
+
+      const captchaResult = await solveCaptcha(id, captchaAction || 'VIDEO_GENERATION', projectId);
+      const token = captchaResult?.token;
+      if (!token) return fail(403, `CAPTCHA_FAILED: ${captchaResult?.error || 'no token'}`);
+
+      const uuid = () => crypto.randomUUID().toUpperCase();
+      const arg = [
+        [[[null, null, [[[prompt]]]], modelKey, aspectEnum, null, [null, null, null, null, uuid(), uuid()]]],
+        [null, 22, null, null, null, projectId, null, null, null, null, [token, 1]],
+        [uuid(), 1],
+      ];
+      console.log('[Flow Agent] YhhmEf submit', modelKey, aspect, 'project', projectId);
+      const res = await flowRpc(tab.id, 'YhhmEf', arg, projectId);
+      if (!res.ok) return fail(res.status || 500, res.error);
+      credits = res.data?.[1];
+      const opId = res.data?.[3]?.[0]?.[0] || res.data?.[2]?.[0]?.[3]?.[4];
+      if (!opId) return fail(500, `NO_OP_ID ${JSON.stringify(res.data).slice(0, 200)}`);
+      media.push({ name: opId });
+    }
+    metrics.successCount++;
+    metrics.lastError = null;
+    chrome.storage.local.set({ metrics });
+    if (visible) updateRequestLog(id, { status: 'success', httpStatus: 200, responseSummary: JSON.stringify(media) });
+    sendToAgent({ id, status: 200, data: { media, remainingCredits: credits } });
+    setState('idle');
+  } catch (e) {
+    fail(500, e.message || 'FLOW_RPC_FAILED');
+  }
+}
+
+async function getAnyFlowTab() {
+  try {
+    const tabs = await chrome.tabs.query({ url: FLOW_TAB_URLS });
+    if (!tabs || !tabs.length) return null;
+    const projectTab = tabs.find((t) => isFlowProjectUrl(t.url));
+    return projectTab || tabs[0];
+  } catch {
+    return null;
   }
 }
 

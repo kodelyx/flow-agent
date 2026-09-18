@@ -89,3 +89,27 @@ def test_background_forgets_user_home_and_skips_non_project_candidates():
     assert "console.warn(" in candidates
     assert candidates.index(skip) < candidates.index("bridgeAlive(tab.id)") < candidates.index("workTabId = tab.id;")
     assert "chrome.tabs.create({ url: targetUrl, active: false })" in source
+
+
+def test_background_serves_generation_through_flow_batchexecute_rpcs():
+    source = (EXTENSION_DIR / "background.js").read_text(encoding="utf-8")
+
+    # flow.google.com has no aisandbox-pa calls and no bearer; generation,
+    # polling, signed URLs and credits are replayed as the page's own RPCs.
+    assert "function classifyFlowRpc(url)" in source
+    assert "async function handleFlowRpcRequest(msg, kind)" in source
+    for rpc in ("'YhhmEf'", "'jwpduf'", "'as29s'", "'nzlxg'", "'ogiZ0b'"):
+        assert rpc in source
+    assert "/_/AiSandboxAngularFrontend/data/batchexecute" in source
+    assert "const rpcKind = classifyFlowRpc(url);" in source
+    assert source.index("const rpcKind = classifyFlowRpc(url);") < source.index("sendToAgent({ id, error: 'INVALID_URL' });")
+    # Verified enums (see FLOW_IMAGE_ASPECT / FLOW_VIDEO_ASPECT comments).
+    assert "IMAGE_ASPECT_RATIO_SQUARE: 1" in source
+    assert "VIDEO_ASPECT_RATIO_PORTRAIT: 1, VIDEO_ASPECT_RATIO_LANDSCAPE: 2" in source
+    assert "_portrait" in source
+    # A verified cookie session stands in for the bearer, and is never sent to
+    # aisandbox-pa as one.
+    assert "const FLOW_SESSION_KEY = 'flow-session';" in source
+    assert "async function ensureFlowSession(" in source
+    assert "if (activeFlowKey === FLOW_SESSION_KEY) {" in source
+    assert "const signed = await resolveFlowMediaUrl(mediaId);" in source
