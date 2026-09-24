@@ -169,11 +169,11 @@ Returns full generation history and metrics recorded in `data/flow.db`.
 ---
 
 ### 2.5. Serve Media Asset
-`GET /api/v1/media/{filename}`
+`GET /v1/media/{filename}` or `GET /api/v1/media/{filename}`
 
 Streams a generated image or video file directly from `output/`.
 
-- **Security**: Validates that `{filename}` resolves inside `output/`. Traversal attempts (e.g., `../../etc/passwd`) return `403 Forbidden`.
+- **Security**: Validates that `{filename}` resolves strictly inside `output/`. Path traversal attempts (e.g., `../../etc/passwd`) safely return `404 Not Found`.
 - **MIME Types**: Automatically maps `.jpg` / `.jpeg` to `image/jpeg`, `.png` to `image/png`, `.mp4` to `video/mp4`, `.webp` to `image/webp`.
 
 ---

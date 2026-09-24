@@ -68,3 +68,19 @@ def test_the_default_ports_do_not_collide():
     """The HTTP API and the SSE transport are different servers; sharing a port
     would make the second one fail to bind."""
     assert parse("server").port != parse("mcp", "--sse").port
+
+
+def test_image_rejects_invalid_aspect_and_count():
+    with pytest.raises(SystemExit):
+        parse("image", "prompt", "--aspect", "invalid_aspect")
+    with pytest.raises(SystemExit):
+        parse("image", "prompt", "--count", "99")
+
+
+def test_video_rejects_invalid_duration_and_quality():
+    with pytest.raises(SystemExit):
+        parse("video", "prompt", "--duration", "99s")
+    with pytest.raises(SystemExit):
+        parse("video", "prompt", "--quality", "4k")
+    with pytest.raises(SystemExit):
+        parse("video", "prompt", "--count", "0")

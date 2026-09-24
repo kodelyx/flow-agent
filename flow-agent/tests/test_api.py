@@ -96,20 +96,25 @@ def test_health(client):
 def test_balance_route(client):
     client.fake.balance = {"accounts": [], "total_credits": 42, "unread": 0}
     assert client.get("/api/v1/balance").json()["total_credits"] == 42
+    assert client.get("/v1/balance").json()["total_credits"] == 42
 
 
 def test_balance_refresh_is_passed_through(client):
     client.get("/api/v1/balance?refresh=true")
     assert ("balance", {"refresh": True}) in client.fake.calls
+    client.get("/v1/balance?refresh=true")
+    assert client.fake.calls.count(("balance", {"refresh": True})) == 2
 
 
 def test_stats_route(client):
     assert client.get("/api/v1/stats").status_code == 200
+    assert client.get("/v1/stats").status_code == 200
 
 
 def test_projects_route_wraps_the_list(client):
     client.fake.projects = [{"id": "p1"}]
     assert client.get("/api/v1/projects").json() == {"projects": [{"id": "p1"}]}
+    assert client.get("/v1/projects").json() == {"projects": [{"id": "p1"}]}
 
 
 # --------------------------------------------------------------------------- #
@@ -317,6 +322,10 @@ def test_native_image_route_speaks_aspect_ratios(client):
     client.post("/api/v1/image", json={"prompt": "x", "aspect": "3:4", "count": 2})
     _, kwargs = client.fake.calls[-1]
     assert kwargs["aspect"] == "3:4" and kwargs["count"] == 2
+    # Verify /v1/generate/image alias
+    client.post("/v1/generate/image", json={"prompt": "x", "aspect": "16:9", "count": 1})
+    _, kwargs = client.fake.calls[-1]
+    assert kwargs["aspect"] == "16:9" and kwargs["count"] == 1
 
 
 def test_native_video_route(client):
@@ -335,6 +344,8 @@ def test_native_video_route(client):
         "all_accounts": False,
         "cookies": None,
     }
+    # Verify /v1/generate/video alias
+    assert client.post("/v1/generate/video", json={"prompt": "x"}).status_code == 200
 
 
 def test_native_image_route_rejects_a_count_out_of_range(client):
@@ -351,6 +362,10 @@ def test_media_serves_a_real_file(client):
     response = client.get("/api/v1/media/ok.png")
     assert response.status_code == 200
     assert response.content == b"png-bytes"
+    # Verify /v1/media alias
+    v1_response = client.get("/v1/media/ok.png")
+    assert v1_response.status_code == 200
+    assert v1_response.content == b"png-bytes"
 
 
 def test_media_refuses_a_traversal(client):

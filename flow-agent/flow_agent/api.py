@@ -332,6 +332,8 @@ async def openai_chat(payload: ChatCompletionRequest, request: Request):
 # --------------------------------------------------------------------------- #
 
 
+@app.post("/v1/generate/image")
+@app.post("/v1/image")
 @app.post("/api/v1/image")
 async def flow_image(payload: FlowImageRequest):
     """Generate an image, speaking the engine's own vocabulary."""
@@ -348,6 +350,8 @@ async def flow_image(payload: FlowImageRequest):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@app.post("/v1/generate/video")
+@app.post("/v1/video")
 @app.post("/api/v1/video")
 async def flow_video(payload: FlowVideoRequest):
     """Generate a video, speaking the engine's own vocabulary."""
@@ -366,6 +370,7 @@ async def flow_video(payload: FlowVideoRequest):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@app.get("/v1/balance")
 @app.get("/api/v1/balance")
 async def flow_balance(refresh: bool = False):
     """Credits per account, cached by default and probed with `?refresh=true`."""
@@ -375,6 +380,7 @@ async def flow_balance(refresh: bool = False):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@app.get("/v1/stats")
 @app.get("/api/v1/stats")
 async def flow_stats():
     """Generation history and engine totals, read from the database."""
@@ -384,6 +390,7 @@ async def flow_stats():
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@app.get("/v1/projects")
 @app.get("/api/v1/projects")
 async def flow_projects(cookies: Optional[str] = None):
     try:
@@ -392,7 +399,8 @@ async def flow_projects(cookies: Optional[str] = None):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@app.get("/api/v1/media/{filename}")
+@app.get("/v1/media/{filename:path}")
+@app.get("/api/v1/media/{filename:path}")
 async def flow_media(filename: str):
     """Serve one generated file.
 

@@ -51,7 +51,7 @@ python main.py image "a glowing neon cyber dragon soaring over mountains" \
 - **`prompt`** (positional, required): Scene prompt.
 - **`--aspect`**: Aspect ratio: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `square`, `landscape`, `portrait` (default: `1:1`).
 - **`--count`**: Variations count: `1` to `4` (default: `1`).
-- **`--model`**: Model name: `narwhal`, `harbor_seal` (default: `narwhal`).
+- **`--model`**: Model name: `narwhal`, `harbor_seal`, `gem_pix_2` (or set default via `$IMAGE_MODEL`, default: `narwhal`).
 - **`--all`**: Concurrently generate on every account in `cookies/`.
 - **`--cookies`**: Target a specific account file (e.g., `cookies/account_c13eea595e47.json`).
 

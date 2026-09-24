@@ -131,8 +131,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     image = sub.add_parser("image", help="generate an image")
     image.add_argument("prompt")
-    image.add_argument("--aspect", default="1:1")
-    image.add_argument("--count", type=int, default=1)
+    image.add_argument(
+        "--aspect",
+        default="1:1",
+        choices=["1:1", "16:9", "9:16", "4:3", "3:4", "square", "landscape", "portrait"],
+        help="image aspect ratio",
+    )
+    image.add_argument(
+        "--count",
+        type=int,
+        default=1,
+        choices=[1, 2, 3, 4],
+        help="number of images (1-4)",
+    )
     image.add_argument("--model", default="narwhal")
     image.add_argument("--all", action="store_true", help="run on every account at once")
     image.add_argument("--cookies", default=None)
@@ -140,10 +151,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     video = sub.add_parser("video", help="generate a video")
     video.add_argument("prompt")
-    video.add_argument("--aspect", default="landscape")
-    video.add_argument("--duration", default="8s")
-    video.add_argument("--quality", default="720p")
-    video.add_argument("--count", type=int, default=1)
+    video.add_argument(
+        "--aspect",
+        default="landscape",
+        choices=["landscape", "portrait", "16:9", "9:16"],
+        help="video aspect ratio",
+    )
+    video.add_argument(
+        "--duration",
+        default="8s",
+        choices=["4s", "6s", "8s", "10s"],
+        help="video duration",
+    )
+    video.add_argument(
+        "--quality",
+        default="720p",
+        choices=["360p", "720p"],
+        help="render quality",
+    )
+    video.add_argument(
+        "--count",
+        type=int,
+        default=1,
+        choices=[1, 2, 3, 4],
+        help="number of videos (1-4)",
+    )
     video.add_argument("--start-image", default=None, help="local image path or media ID")
     video.add_argument("--all", action="store_true")
     video.add_argument("--cookies", default=None)
