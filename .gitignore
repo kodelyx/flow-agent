@@ -1,36 +1,44 @@
+# Flow-Agent Git Ignore
+
+# Binaries
+bin/flow
+*.exe
+
 # Python
 __pycache__/
 *.py[cod]
-*.egg-info/
-.eggs/
-build/
-dist/
-.venv/
+*$py.class
+*.so
+.Python
+env/
 venv/
+.venv/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Generated and uploaded media
+# Runtime data & cookies
+cookies/
+data/
 output/
-input/
-*.mp4
-*.png
-*.jpg
-*.jpeg
-!flow-extension/icon*.png
-media-id.js
-
-# Secrets and local credentials
-config.env
-github-token
-cloudflared/
-*.pem
-
-# Logs
 *.log
-logs/
+.env
 
-# Chrome extension build artifacts
-_metadata/
+# Test artifacts
+.pytest_cache/
+.pytest-tmp/
 
-# OS
+# OS metadata
 .DS_Store
-Thumbs.db

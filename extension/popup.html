@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Flow Bridge</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --surface-card: #f1f5f9;
+      --border: #e2e8f0;
+      --border-subtle: #edf2f7;
+      --text: #0f172a;
+      --muted: #64748b;
+      --faint: #94a3b8;
+      --ok: #059669;
+      --ok-bg: #ecfdf5;
+      --off: #e11d48;
+      --off-bg: #fff1f2;
+    }
+
+    * { box-sizing: border-box; }
+
+    /* The window is a square rectangle, so a radius here would only show four
+       pale notches. The surface stays flat and the card carries the edges. */
+    html { background: var(--bg); }
+
+    body {
+      margin: 0;
+      width: 280px;
+      padding: 14px;
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text",
+            "Segoe UI", Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ---------------------------------------------------------------- *
+     * Header
+     * ---------------------------------------------------------------- */
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 11px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--text);
+    }
+
+    #badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      flex: none;
+      padding: 3px 9px 3px 8px;
+      border-radius: 999px;
+      font-size: 10.5px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      border: 1px solid var(--border);
+      background: var(--surface-card);
+      color: var(--muted);
+    }
+
+    #badge::before {
+      content: '';
+      flex: none;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    #badge.ok {
+      color: var(--ok);
+      background: var(--ok-bg);
+      border-color: #a7f3d0;
+    }
+
+    #badge.off {
+      color: var(--off);
+      background: var(--off-bg);
+      border-color: #fecdd3;
+    }
+
+    #badge.ok::before { animation: pulse 2s ease-in-out infinite; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(5, 150, 105, 0.45); }
+      50%      { opacity: 0.7; box-shadow: 0 0 0 3px rgba(5, 150, 105, 0); }
+    }
+
+    /* ---------------------------------------------------------------- *
+     * Status card
+     * ---------------------------------------------------------------- */
+
+    .card {
+      padding: 11px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05), 0 1px 3px rgba(15, 23, 42, 0.08);
+    }
+
+    .stats { display: grid; gap: 8px; }
+
+    .stat {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px;
+      align-items: baseline;
+      font-size: 12px;
+    }
+
+    .stat .k { color: var(--muted); }
+
+    /* `min-width: 0` is what lets the ellipsis happen at all: a grid item
+       defaults to `min-width: auto`, which refuses to shrink below its content
+       and would push the card wider instead of truncating. */
+    .stat .v {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: right;
+      color: var(--text);
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* The script assigns `className` wholesale and includes the base class in
+       what it writes (`'v ok'`, `'v faint'`), so these have to hang off `.v`
+       rather than replacing it. */
+    .stat .v.ok { color: var(--ok); }
+    .stat .v.off { color: var(--off); }
+    .stat .v.faint { color: var(--faint); }
+
+    /* ---------------------------------------------------------------- *
+     * Actions
+     *
+     * The icons are inline SVG stroked with `currentColor` rather than emoji:
+     * an emoji is drawn by the system font, so it changes shape and colour on
+     * every platform and cannot be made to match the button's own text.
+     * ---------------------------------------------------------------- */
+
+    button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      width: 100%;
+      font: inherit;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      border-radius: 9px;
+      transition: background 0.15s ease, border-color 0.15s ease,
+                  box-shadow 0.15s ease, transform 0.06s ease;
+    }
+
+    button svg { flex: none; }
+
+    #copy {
+      margin-top: 11px;
+      padding: 10px 14px;
+      color: #ffffff;
+      background: #0f172a;
+      border: 1px solid #0f172a;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.16);
+    }
+
+    #copy:hover { background: #1e293b; border-color: #1e293b; }
+
+    #openFlow {
+      margin-top: 8px;
+      padding: 9px 14px;
+      color: #334155;
+      background: var(--surface);
+      border: 1px solid #cbd5e1;
+    }
+
+    #openFlow:hover { background: var(--bg); border-color: #94a3b8; }
+
+    button:active { transform: translateY(1px); }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: default;
+      transform: none;
+    }
+
+    #result {
+      margin: 9px 0 0;
+      font-size: 11.5px;
+      color: var(--muted);
+    }
+
+    /* Nothing to say, so say nothing — a reserved empty line is dead space. */
+    #result:empty { display: none; }
+
+    #result.ok { color: var(--ok); }
+    #result.off { color: var(--off); }
+
+    /* ---------------------------------------------------------------- *
+     * Footer
+     * ---------------------------------------------------------------- */
+
+    footer {
+      margin-top: 11px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border-subtle);
+      font-size: 10.5px;
+      letter-spacing: 0.02em;
+      text-align: center;
+      color: var(--faint);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Flow Bridge</h1>
+    <span id="badge">checking</span>
+  </header>
+
+  <section class="card">
+    <div class="stats">
+      <div class="stat"><span class="k">Session</span><span class="v" id="sessionStatus">Ready (Signed In)</span></div>
+      <div class="stat"><span class="k">Cookie Sync</span><span class="v" id="syncStatus">Real-time Active</span></div>
+      <div class="stat"><span class="k">Backend Bridge</span><span class="v" id="engineStatus">Connected (:9222)</span></div>
+    </div>
+  </section>
+
+  <button id="copy" type="button">
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="9" y="9" width="12" height="12" rx="2.5"/>
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+    </svg>
+    Copy Cookies
+  </button>
+
+  <button id="openFlow" type="button">
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M15 3h6v6"/>
+      <path d="M10 14 21 3"/>
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+    </svg>
+    Open Google Flow
+  </button>
+
+  <p id="result"></p>
+
+  <!--
+    There is deliberately no bridge-token field here.
+
+    Pairing is not something a human does: the extension connects tokenless on
+    first run, the backend hands it a token over that connection via `config.set`,
+    and the extension persists it and reconnects with it. A lost token used to
+    need a paste, and the backend now re-arms that same handover on start-up, so
+    there is nothing left for this panel to do — see `clearPairingMarker` in
+    flow-go/internal/app/app.go.
+  -->
+  <footer>Flow Bridge • <span id="version">v1.0.0</span></footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
