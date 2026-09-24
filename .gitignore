@@ -1,6 +1,7 @@
 # Flow-Agent Git Ignore
 
 # Binaries
+**/bin/flow
 bin/flow
 *.exe
 
@@ -30,6 +31,9 @@ wheels/
 *.egg
 
 # Runtime data & cookies
+**/cookies/
+**/data/
+**/output/
 cookies/
 data/
 output/
@@ -37,6 +41,8 @@ output/
 .env
 
 # Test artifacts
+**/.pytest_cache/
+**/.pytest-tmp/
 .pytest_cache/
 .pytest-tmp/
 
