@@ -104,6 +104,32 @@ class FlowEngine:
     would silently use a different set of accounts.
     """
 
+    @staticmethod
+    def _find_binary(root: Path, explicit: Optional[str | Path] = None) -> Path:
+        """Locate the platform-appropriate engine executable."""
+        if explicit:
+            return Path(explicit)
+
+        import platform
+        system = platform.system().lower()
+        bin_dir = root / "bin"
+
+        # Platform priority candidates
+        if "windows" in system:
+            candidates = ["flow-windows.exe", "flow.exe", "flow"]
+        elif "darwin" in system:
+            candidates = ["flow-macos", "flow", "flow-darwin"]
+        else:  # Linux / Unix
+            candidates = ["flow-linux", "flow", "flow-x86_64"]
+
+        for name in candidates:
+            candidate_path = bin_dir / name
+            if candidate_path.exists():
+                return candidate_path
+
+        default_name = "flow-windows.exe" if "windows" in system else "flow"
+        return bin_dir / default_name
+
     def __init__(
         self,
         root: Optional[str | Path] = None,
@@ -116,14 +142,14 @@ class FlowEngine:
             self.root = Path(root).resolve()
         else:
             pkg_dir = Path(__file__).resolve().parent
-            if (pkg_dir / "bin" / "flow").exists():
+            if (pkg_dir / "bin").exists():
                 self.root = pkg_dir
-            elif (pkg_dir.parent / "bin" / "flow").exists():
+            elif (pkg_dir.parent / "bin").exists():
                 self.root = pkg_dir.parent
             else:
                 self.root = pkg_dir.parent
 
-        self.binary = Path(binary) if binary else self.root / "bin" / "flow"
+        self.binary = self._find_binary(self.root, binary)
         self.db_path = Path(db_path) if db_path else self.root / "data" / "flow.db"
         self.output_dir = Path(output_dir) if output_dir else self.root / "output"
         self.timeout = timeout
@@ -145,6 +171,13 @@ class FlowEngine:
             raise EngineError(
                 self._command(*args), 127, "", f"no engine binary at {self.binary}"
             )
+
+        import os
+        if hasattr(os, "chmod") and not os.access(self.binary, os.X_OK):
+            try:
+                os.chmod(self.binary, 0o755)
+            except OSError:
+                pass
 
         command = self._command(*args)
         limit = timeout or self.timeout

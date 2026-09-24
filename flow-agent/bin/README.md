@@ -1,6 +1,13 @@
-# Flow Engine Binary
+# Flow Engine Binaries
 
-This directory contains the pre-compiled binary (`flow`) that handles the low-level communication with Google Flow.
+This directory contains pre-compiled binaries for each major operating system:
+- `flow-macos` (Universal Mach-O binary for both Apple Silicon arm64 & Intel x86_64)
+- `flow-linux` (ELF 64-bit executable for Linux x86_64)
+- `flow-windows.exe` (PE32+ executable for Windows x64)
+- `flow` (macOS executable)
+
+> [!NOTE]
+> Flow Agent's Python engine automatically detects your operating system at runtime (`platform.system()`) and selects the compatible binary with automatic executable permissions.
 
 ---
 

@@ -255,3 +255,26 @@ def test_available_reflects_the_binary(tmp_path):
     assert engine.available() is False
     binary.write_text("#!/bin/sh\n")
     assert engine.available() is True
+
+
+def test_find_binary_selects_platform_executable(tmp_path, monkeypatch):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+
+    # On Windows: prefers flow-windows.exe
+    win_bin = bin_dir / "flow-windows.exe"
+    win_bin.write_text("dummy")
+    monkeypatch.setattr("platform.system", lambda: "Windows")
+    assert FlowEngine._find_binary(tmp_path) == win_bin
+
+    # On Linux: prefers flow-linux
+    linux_bin = bin_dir / "flow-linux"
+    linux_bin.write_text("dummy")
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    assert FlowEngine._find_binary(tmp_path) == linux_bin
+
+    # On Darwin: prefers flow-macos
+    mac_bin = bin_dir / "flow-macos"
+    mac_bin.write_text("dummy")
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    assert FlowEngine._find_binary(tmp_path) == mac_bin

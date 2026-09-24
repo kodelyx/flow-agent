@@ -1,10 +1,5 @@
 # Flow-Agent Git Ignore
 
-# Binaries
-**/bin/flow
-bin/flow
-*.exe
-
 # Python
 __pycache__/
 *.py[cod]
