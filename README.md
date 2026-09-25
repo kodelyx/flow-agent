@@ -4,6 +4,7 @@
 
 **Generate AI images and videos from Google Flow — via CLI, REST API, or your AI assistant.**
 
+[![Release](https://img.shields.io/badge/Release-v1.0.0-e11d48?style=flat-square&logo=github&logoColor=white)](https://github.com/kodelyx/flow-agent/releases/tag/v1.0.0)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-REST%20Server-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![MCP](https://img.shields.io/badge/MCP-Claude%20%7C%20Cursor%20%7C%20AGY-7c3aed?style=flat-square)](https://modelcontextprotocol.io/)
