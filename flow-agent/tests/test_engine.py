@@ -95,6 +95,27 @@ def test_command_keeps_falsy_values_that_are_not_absent():
     assert engine._command("image", "p", 0) == ["/bin/echo", "image", "p", "0"]
 
 
+@pytest.mark.parametrize("images,flags", [
+    ({}, []),
+    ({"start_image": "first frame.png", "end_image": "last-id"},
+     ["--start-image", "first frame.png", "--end-image", "last-id"]),
+    ({"reference_images": ["character one.png", "character-two-id"]},
+     ["--reference", "character one.png", "--reference", "character-two-id"]),
+])
+async def test_generate_video_passes_image_flags_without_splitting_paths(tmp_path, monkeypatch, images, flags):
+    engine = FlowEngine(root=tmp_path)
+    calls = []
+
+    async def run_json(*args, **kwargs):
+        calls.append((list(args), kwargs))
+        return {"status": "succeeded"}
+
+    monkeypatch.setattr(engine, "_run_json", run_json)
+    result = await engine.generate_video("x", aspect="9:16", **images)
+    assert result == {"status": "succeeded"}
+    assert calls == [(["generate", "x", "9:16", "8s", "720p", *flags], {"timeout": None})]
+
+
 # --------------------------------------------------------------------------- #
 # database reads
 # --------------------------------------------------------------------------- #

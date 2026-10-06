@@ -341,11 +341,33 @@ def test_native_video_route(client):
         "quality": "360p",
         "count": 1,
         "start_image": None,
+        "end_image": None,
+        "reference_images": None,
         "all_accounts": False,
         "cookies": None,
     }
     # Verify /v1/generate/video alias
     assert client.post("/v1/generate/video", json={"prompt": "x"}).status_code == 200
+
+
+@pytest.mark.parametrize("route", ["/api/v1/video", "/v1/video", "/v1/generate/video"])
+@pytest.mark.parametrize("images", [
+    {"start_image": "first frame.png", "end_image": "last-frame-id"},
+    {"reference_images": ["character one.png", "character-two-id"]},
+])
+def test_native_video_passes_image_inputs_through(client, route, images):
+    response = client.post(route, json={"prompt": "x", "aspect": "9:16", **images})
+    assert response.status_code == 200
+    kwargs = client.fake.calls[-1][1]
+    assert kwargs["aspect"] == "9:16"
+    for name, value in images.items():
+        assert kwargs[name] == value
+
+
+def test_native_video_requires_a_reference_list(client):
+    response = client.post("/api/v1/video", json={"prompt": "x", "reference_images": "a.png"})
+    assert response.status_code == 422
+    assert client.fake.calls == []
 
 
 def test_native_image_route_rejects_a_count_out_of_range(client):

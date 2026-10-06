@@ -144,6 +144,8 @@ python main.py video PROMPT [OPTIONS]
 | `--quality` | string | `720p` | `360p` `720p` | Output resolution |
 | `--count` | integer | `1` | `1` `2` `3` `4` | Number of variations |
 | `--start-image` | string | `null` | — | Local image path or media ID (enables image-to-video) |
+| `--end-image` | string | `null` | — | Ending image path or media ID; use with `--start-image` |
+| `--reference` | string | `null` | — | Reference image path or media ID; repeat for multiple characters |
 | `--all` | flag | off | — | Run on every account concurrently |
 | `--cookies` | string | `null` | — | Target a specific account file |
 
@@ -161,7 +163,16 @@ python main.py video "camera slowly panning right" --start-image output/my_image
 
 # Animate a previously uploaded media asset
 python main.py video "zoom into the galaxy" --start-image 4cb43f55-2897-47cd-b2bf-117f2e5f450c
+
+# Generate from character references
+python main.py video "the two characters walk through the city" \
+  --reference character-a.jpg --reference character-b.jpg --aspect 9:16
 ```
+
+References cannot be combined with frames or `--all`. This path returns one video
+regardless of `--count` and has no `--quality` variant. Reference aspect ratios
+require an engine build with `ReferenceVideoRequest.AspectRatio`; older binaries
+report `--aspect` as ignored.
 
 > **Validation**: `--aspect`, `--duration`, and `--quality` are strictly validated. Unsupported values (e.g. `--duration 5s`, `--quality 1080p`) exit with code `2` and a descriptive error — they are **not silently coerced**.
 

@@ -77,6 +77,8 @@ def cmd_video(args) -> int:
                 quality=args.quality,
                 count=args.count,
                 start_image=args.start_image,
+                end_image=args.end_image,
+                reference_images=args.reference_images,
                 all_accounts=args.all,
                 cookies=args.cookies,
             )
@@ -177,6 +179,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="number of videos (1-4)",
     )
     video.add_argument("--start-image", default=None, help="local image path or media ID")
+    video.add_argument("--end-image", default=None, help="local image path or media ID")
+    video.add_argument(
+        "--reference", dest="reference_images", action="append",
+        help="reference image path or media ID; repeatable, cannot be combined with frames or --all",
+    )
     video.add_argument("--all", action="store_true")
     video.add_argument("--cookies", default=None)
     video.set_defaults(func=cmd_video)

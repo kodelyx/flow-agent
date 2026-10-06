@@ -100,6 +100,8 @@ class FlowVideoRequest(BaseModel):
     quality: str = "720p"
     count: int = Field(default=1, ge=1, le=4)
     start_image: Optional[str] = None
+    end_image: Optional[str] = None
+    reference_images: Optional[list[str]] = None
     all_accounts: bool = False
     cookies: Optional[str] = None
 
@@ -363,6 +365,8 @@ async def flow_video(payload: FlowVideoRequest):
             quality=payload.quality,
             count=payload.count,
             start_image=payload.start_image,
+            end_image=payload.end_image,
+            reference_images=payload.reference_images,
             all_accounts=payload.all_accounts,
             cookies=payload.cookies,
         )

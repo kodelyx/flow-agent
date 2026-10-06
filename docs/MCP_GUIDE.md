@@ -105,6 +105,13 @@ Generates an animated video clip from text or an image.
 | `duration` | `string` | No | `"8s"` | Duration: `"4s"`, `"6s"`, `"8s"`, `"10s"`. |
 | `quality` | `string` | No | `"720p"` | `"720p"` or `"360p"`. |
 | `start_image` | `string` | No | `null` | Local image path or uploaded media ID to animate. |
+| `end_image` | `string` | No | `null` | Ending image path or media ID; use with `start_image`. |
+| `reference_images` | `string[]` | No | `null` | Reference image paths or media IDs for character continuity. |
+
+References cannot be combined with frames or `all_accounts`. This path returns
+one video and has no quality variant. Image paths must be accessible to the MCP
+server. Reference aspect ratios require an engine build with
+`ReferenceVideoRequest.AspectRatio`.
 
 ---
 

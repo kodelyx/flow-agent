@@ -86,6 +86,22 @@ TOOLS: list[dict] = [
                     "default": "720p",
                     "description": "720p costs more credits per render than 360p.",
                 },
+                "start_image": {
+                    "type": "string",
+                    "description": "Local starting image path or project media ID.",
+                },
+                "end_image": {
+                    "type": "string",
+                    "description": "Local ending image path or project media ID; use with start_image.",
+                },
+                "reference_images": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Reference image paths or project media IDs. Cannot be combined "
+                        "with frames or all_accounts; returns one video."
+                    ),
+                },
                 "all_accounts": {"type": "boolean", "default": False},
             },
             "required": ["prompt"],
@@ -159,6 +175,9 @@ async def call_tool(name: str, arguments: dict) -> dict:
                 aspect=arguments.get("aspect", "16:9"),
                 duration=arguments.get("duration", "8s"),
                 quality=arguments.get("quality", "720p"),
+                start_image=arguments.get("start_image"),
+                end_image=arguments.get("end_image"),
+                reference_images=arguments.get("reference_images"),
                 all_accounts=bool(arguments.get("all_accounts", False)),
             )
         elif name == "flow_get_balance":

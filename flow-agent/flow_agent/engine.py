@@ -261,8 +261,14 @@ class FlowEngine:
         cookies: Optional[str] = None,
         download: bool = True,
         timeout: Optional[int] = None,
+        end_image: Optional[str] = None,
+        reference_images: Optional[list[str]] = None,
     ) -> dict:
         """Generate a video and return the engine's result object.
+
+        Image inputs are passed to the engine's existing frame/reference flags.
+        References cannot be combined with frames or all_accounts; that path
+        returns one video and has no quality variant.
 
         The result carries `media_ids`, `urls`, `files`, `credits_remaining`,
         `quality` and `status`. A render is asynchronous, so with `download=False`
@@ -273,6 +279,10 @@ class FlowEngine:
             args.append(f"x{count}")
         if start_image:
             args += ["--start-image", start_image]
+        if end_image:
+            args += ["--end-image", end_image]
+        for reference in reference_images or []:
+            args += ["--reference", reference]
         if all_accounts:
             args.append("--all")
         if cookies:

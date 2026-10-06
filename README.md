@@ -127,7 +127,22 @@ python main.py video "PROMPT" \
 # Image to video (animate a photo)
 python main.py video "camera slowly pans right" \
   --start-image output/my-image.jpg
+
+# First and last frames
+python main.py video "camera slowly pans right" \
+  --start-image output/first.jpg --end-image output/last.jpg
+
+# Character references (repeat --reference for each image)
+python main.py video "the two characters walk through the city" \
+  --reference output/character-a.jpg --reference output/character-b.jpg \
+  --aspect 9:16
 ```
+
+References select the engine's reference-to-video path and cannot be combined
+with `--start-image`, `--end-image`, or `--all`. That path returns one video;
+`--count` and `--quality` do not change it. Reference aspect ratios require an
+engine build that wires `ReferenceVideoRequest.AspectRatio`; older bundled
+binaries report `--aspect` as ignored on this path.
 
 ### 💰 Balance & Stats
 

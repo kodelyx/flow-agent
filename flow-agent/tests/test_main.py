@@ -42,12 +42,34 @@ def test_video_defaults():
     assert args.quality == "720p"
     assert args.count == 1
     assert args.start_image is None
+    assert args.end_image is None
+    assert args.reference_images is None
 
 
 def test_video_accepts_a_start_image_and_a_count():
     args = parse("video", "x", "--start-image", "frame.png", "--count", "3")
     assert args.start_image == "frame.png"
     assert args.count == 3
+
+
+@pytest.mark.parametrize("options,images", [
+    (["--start-image", "first.png", "--end-image", "last.png"],
+     {"start_image": "first.png", "end_image": "last.png"}),
+    (["--reference", "character one.png", "--reference", "character-two-id"],
+     {"reference_images": ["character one.png", "character-two-id"]}),
+])
+def test_video_forwards_image_options(monkeypatch, options, images):
+    calls = []
+
+    async def generate_video(**kwargs):
+        calls.append(kwargs)
+        return {"status": "succeeded"}
+
+    monkeypatch.setattr(main.engine, "generate_video", generate_video)
+    assert main.main(["video", "x", "--aspect", "9:16", *options]) == 0
+    assert calls[0]["aspect"] == "9:16"
+    for name, value in images.items():
+        assert calls[0][name] == value
 
 
 def test_server_port_is_an_integer():

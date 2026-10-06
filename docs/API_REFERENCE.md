@@ -129,7 +129,7 @@ Generates one or more images from a text prompt using Google Flow's image models
 POST /api/v1/video
 ```
 
-Generates a video clip from text, or animates a starting image into video.
+Generates a video clip from text, first/last frames, or character reference images.
 
 #### Request Body
 
@@ -141,6 +141,8 @@ Generates a video clip from text, or animates a starting image into video.
   "quality": "720p",
   "count": 1,
   "start_image": null,
+  "end_image": null,
+  "reference_images": null,
   "all_accounts": false,
   "cookies": null
 }
@@ -154,8 +156,24 @@ Generates a video clip from text, or animates a starting image into video.
 | `quality` | string | ❌ | `"720p"` | Resolution: `"360p"`, `"720p"` |
 | `count` | integer | ❌ | `1` | Number of variations — `1` to `4` |
 | `start_image` | string | ❌ | `null` | Local image path or uploaded media ID for image-to-video |
+| `end_image` | string | ❌ | `null` | Ending image path or media ID; use with `start_image` |
+| `reference_images` | string[] | ❌ | `null` | Reference image paths or media IDs; selects reference-to-video |
 | `all_accounts` | boolean | ❌ | `false` | Run on every account concurrently |
 | `cookies` | string | ❌ | `null` | Path to a specific account bundle |
+
+`reference_images` cannot be combined with `start_image`, `end_image`, or
+`all_accounts`. The reference path returns one video regardless of `count`,
+and has no `quality` variant. Local image paths must be accessible to the server.
+Reference aspect ratios require an engine build with `ReferenceVideoRequest.AspectRatio`.
+
+```json
+{
+  "prompt": "the two characters walk through the city",
+  "reference_images": ["/absolute/path/character-a.jpg", "/absolute/path/character-b.jpg"],
+  "aspect": "9:16",
+  "duration": "8s"
+}
+```
 
 #### Response `200 OK`
 

@@ -90,6 +90,16 @@ async def test_tool_enum_defaults_are_in_their_own_enum():
                 assert prop["default"] in prop["enum"], f"{tool['name']}.{name}"
 
 
+async def test_video_tool_advertises_image_inputs():
+    body = await reply("tools/list")
+    video = next(tool for tool in body["result"]["tools"] if tool["name"] == "flow_generate_video")
+    properties = video["inputSchema"]["properties"]
+    assert properties["start_image"]["type"] == "string"
+    assert properties["end_image"]["type"] == "string"
+    assert properties["reference_images"]["type"] == "array"
+    assert properties["reference_images"]["items"] == {"type": "string"}
+
+
 # --------------------------------------------------------------------------- #
 # dispatch
 # --------------------------------------------------------------------------- #
@@ -170,6 +180,22 @@ async def test_tools_call_defaults_are_applied(fake_engine):
     assert kwargs["aspect"] == "16:9"
     assert kwargs["duration"] == "8s"
     assert kwargs["quality"] == "720p"
+
+
+@pytest.mark.parametrize("images", [
+    {"start_image": "first.png", "end_image": "last.png"},
+    {"reference_images": ["character one.png", "character-two-id"]},
+])
+async def test_video_tool_passes_image_inputs_through(fake_engine, images):
+    body = await reply("tools/call", params={
+        "name": "flow_generate_video",
+        "arguments": {"prompt": "x", "aspect": "9:16", **images},
+    })
+    assert "isError" not in body["result"]
+    kind, kwargs = fake_engine.calls[-1]
+    assert kind == "video" and kwargs["aspect"] == "9:16"
+    for name, value in images.items():
+        assert kwargs[name] == value
 
 
 async def test_a_missing_argument_is_an_error_result_not_a_crash(fake_engine):
