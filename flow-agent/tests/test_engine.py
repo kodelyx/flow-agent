@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from flow_agent.engine import FlowEngine, extract_json
+from flow_agent.engine import FlowEngine, clean_cookies, clean_model, extract_json
 
 # --------------------------------------------------------------------------- #
 # extract_json
@@ -93,6 +93,69 @@ def test_command_keeps_falsy_values_that_are_not_absent():
     """`0` is a value. Only None and "" mean "not given"."""
     engine = FlowEngine(root="/tmp", binary="/bin/echo")
     assert engine._command("image", "p", 0) == ["/bin/echo", "image", "p", "0"]
+
+
+# --------------------------------------------------------------------------- #
+# what reaches the command line
+# --------------------------------------------------------------------------- #
+
+
+def test_clean_model_keeps_a_name_it_was_given():
+    """`narwhal` is a model the caller asked for, not a typo to be corrected.
+
+    Rewriting it to `beluga` runs something other than what was asked for, and
+    `main.py` passes its own `narwhal` default through untouched, so the CLI and
+    the API would disagree about the same word.
+    """
+    assert clean_model("narwhal") == "narwhal"
+
+
+def test_clean_model_falls_back_for_a_placeholder():
+    """Swagger UI sends `string` for a field left alone."""
+    for placeholder in ("", "  ", "string", "default", "none", "null", None):
+        assert clean_model(placeholder) == "beluga"
+
+
+def test_clean_cookies_drops_the_placeholders_a_form_sends():
+    """A known-dummy cookie reads as an auth failure, not as an unset option."""
+    for placeholder in ("", "   ", "string", "null", "none", "undefined", '""', "''", None):
+        assert clean_cookies(placeholder) is None
+
+
+def test_clean_cookies_strips_the_value_it_keeps():
+    """The value becomes one argv token, so padding around it is not cosmetic."""
+    assert clean_cookies("  sid=abc  ") == "sid=abc"
+
+
+async def test_a_placeholder_cookie_never_reaches_the_command(monkeypatch, tmp_path):
+    engine = FlowEngine(root=str(tmp_path), binary=str(tmp_path / "flow"))
+    seen: dict = {}
+
+    async def capture(*args, **kwargs):
+        seen["args"] = args
+        return {}
+
+    monkeypatch.setattr(engine, "_run_json", capture)
+
+    await engine.generate_image("a boat", cookies="string")
+    assert "--cookies" not in seen["args"]
+
+    await engine.generate_image("a boat", cookies="  sid=abc  ")
+    assert seen["args"][-2:] == ("--cookies", "sid=abc")
+
+
+async def test_a_named_model_reaches_the_command_unchanged(monkeypatch, tmp_path):
+    engine = FlowEngine(root=str(tmp_path), binary=str(tmp_path / "flow"))
+    seen: dict = {}
+
+    async def capture(*args, **kwargs):
+        seen["args"] = args
+        return {}
+
+    monkeypatch.setattr(engine, "_run_json", capture)
+
+    await engine.generate_image("a boat", model="narwhal")
+    assert seen["args"][seen["args"].index("--model") + 1] == "narwhal"
 
 
 # --------------------------------------------------------------------------- #

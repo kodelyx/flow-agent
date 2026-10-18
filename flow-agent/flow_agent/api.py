@@ -10,16 +10,18 @@ from __future__ import annotations
 
 import base64
 import json
+import mimetypes
 import time
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .engine import EngineError, FlowEngine
+from .engine import EngineError, FlowEngine, clean_model
 
 app = FastAPI(
     title="flow-agent",
@@ -39,7 +41,6 @@ engine = FlowEngine()
 
 
 # OpenAI's image sizes, and the aspect each one means.
-#
 # The pairs are not invented here: OpenAI's three sizes are 1:1, 3:2 and 2:3, and
 # the Flow ratios that match are square, landscape and portrait. The two extra
 # entries are Flow's own 4:3 and 3:4, which have no OpenAI size and are reachable
@@ -50,6 +51,8 @@ SIZE_TO_ASPECT = {
     "1024x1792": "9:16",
     "1365x1024": "4:3",
     "1024x1365": "3:4",
+    "512x512": "1:1",
+    "256x256": "1:1",
     # The aliases a caller may use instead of pixels.
     "square": "1:1",
     "landscape": "16:9",
@@ -75,22 +78,42 @@ class ImageGenerationRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     prompt: str
-    model: str = "narwhal"
+    model: str = "beluga"
     n: int = Field(default=1, ge=1, le=4)
     size: str = "1024x1024"
-    response_format: str = "url"
+    response_format: str = Field(
+        default="url",
+        description=(
+            "Response format. 'url' is the OpenAI default and what an unmodified "
+            "SDK expects: JSON carrying a fetchable link. 'image' streams the raw "
+            "bytes back for inline preview or download in a browser; 'b64_json' "
+            "inlines the bytes in JSON."
+        ),
+    )
     # Flow-specific, ignored by OpenAI clients.
     all_accounts: bool = False
     cookies: Optional[str] = None
+
+    @field_validator("model", mode="before")
+    @classmethod
+    def sanitize_model(cls, v: Any) -> str:
+        # Swagger UI fills an untouched field with the literal text `string`.
+        return clean_model(v)
 
 
 class FlowImageRequest(BaseModel):
     prompt: str
     aspect: str = "1:1"
     count: int = Field(default=1, ge=1, le=4)
-    model: str = "narwhal"
+    model: str = "beluga"
     all_accounts: bool = False
     cookies: Optional[str] = None
+
+    @field_validator("model", mode="before")
+    @classmethod
+    def sanitize_model(cls, v: Any) -> str:
+        # Swagger UI fills an untouched field with the literal text `string`.
+        return clean_model(v)
 
 
 class FlowVideoRequest(BaseModel):
@@ -128,14 +151,58 @@ class ChatCompletionRequest(BaseModel):
 # --------------------------------------------------------------------------- #
 
 
-def _media_url(request: Request, path: str) -> str:
-    """The URL a client can fetch one generated file from.
+#: The characters a `host[:port]` may be built from: a DNS name, an IPv4 literal,
+#: a bracketed IPv6 literal, or an underscore in an internal hostname. `@`, `\`
+#: and `%` are absent on purpose - a userinfo `@` makes the host read as a
+#: credential, and a browser normalises `\` to `/`.
+_AUTHORITY_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:[]_"
+)
 
-    Built from the request's own base URL rather than a hardcoded host, so the
-    response is correct whether this is reached on localhost, a LAN address or
-    behind a proxy.
+
+def _base_url(request: Request) -> str:
+    """The scheme and authority to build a URL for this request from.
+
+    Taken from the request's own base URL rather than a hardcoded host, so the
+    answer is right whether this is reached on localhost, a LAN address or behind
+    a proxy. `X-Forwarded-Proto` and `X-Forwarded-Host` are what a reverse proxy
+    rewrites, so they are honoured - but they are also caller-supplied strings on
+    their way into a response body, and a URL in a response is followed by
+    whoever asked for it. A forwarded pair is therefore used only when it
+    assembles into a bare `scheme://host[:port]`: no path, no query, no
+    credentials. Anything else falls back to this framework's own base URL.
     """
-    return f"{str(request.base_url).rstrip('/')}/api/v1/media/{Path(path).name}"
+    proto = request.headers.get("x-forwarded-proto", "").strip().lower()
+    if proto not in ("http", "https"):
+        # A proxy that forwards the host but not the scheme is the ordinary
+        # case rather than an error, so the scheme falls back on its own instead
+        # of discarding a host that is perfectly usable.
+        proto = request.url.scheme
+
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").strip()
+    forwarded = f"{proto}://{host}" if host else ""
+
+    try:
+        parts = urlsplit(forwarded)
+    except ValueError:
+        # A malformed authority (an unclosed IPv6 bracket, say) is not usable.
+        return str(request.base_url).rstrip("/")
+
+    if (
+        parts.scheme in ("http", "https")
+        and parts.netloc
+        and set(parts.netloc) <= _AUTHORITY_CHARS
+        and not parts.path
+        and not parts.query
+        and not parts.fragment
+    ):
+        return f"{parts.scheme}://{parts.netloc}"
+    return str(request.base_url).rstrip("/")
+
+
+def _media_url(request: Request, path: str) -> str:
+    """The URL a client can fetch one generated file from."""
+    return f"{_base_url(request)}/api/v1/media/{Path(path).name}"
 
 
 def _no_image_detail(result: dict) -> str:
@@ -260,9 +327,47 @@ def _sse(body: dict) -> StreamingResponse:
 # --------------------------------------------------------------------------- #
 
 
-@app.post("/v1/images/generations")
+@app.post(
+    "/v1/images/generations",
+    responses={
+        200: {
+            "content": {
+                "application/json": {},
+                "image/png": {},
+                "image/jpeg": {},
+            },
+            "description": "OpenAI-shaped JSON, or the image file itself for inline preview",
+        }
+    },
+)
+@app.post(
+    "/api/v1/images/generations",
+    responses={
+        200: {
+            "content": {
+                "application/json": {},
+                "image/png": {},
+                "image/jpeg": {},
+            },
+            "description": "OpenAI-shaped JSON, or the image file itself for inline preview",
+        }
+    },
+)
 async def openai_images(payload: ImageGenerationRequest, request: Request):
-    """Generate an image from an OpenAI images payload."""
+    """Generate an image from an OpenAI images payload.
+
+    `response_format` decides how the bytes come back:
+
+    - `image` (also `file`, `binary`, `raw`, `preview`): the image file itself,
+      streamed, so Swagger UI or a plain browser can show or save it at once.
+    - `url` (the default): OpenAI's own shape, JSON carrying a download URL a
+      client on another machine can fetch.
+    - `b64_json`: the bytes inlined as a base64 string.
+
+    The declared types list PNG as well as JPEG because the type of a streamed
+    file is read from the file itself, so whichever one the engine wrote is the
+    one the client is told.
+    """
     aspect = SIZE_TO_ASPECT.get(payload.size.strip().lower())
     if aspect is None:
         raise HTTPException(
@@ -284,6 +389,30 @@ async def openai_images(payload: ImageGenerationRequest, request: Request):
         )
     except EngineError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    files = result.get("files") or []
+    if not files:
+        raise HTTPException(status_code=502, detail=_no_image_detail(result))
+
+    fmt = (payload.response_format or "").strip().lower()
+
+    # Hand the bytes back untouched: this is the branch a browser and Swagger UI
+    # use to show the image and its download button.
+    if fmt in ("image", "file", "binary", "raw", "preview"):
+        first_file = files[0].get("path")
+        if first_file:
+            img_path = Path(first_file)
+            if img_path.is_file():
+                # Read the type off the file, the same rule the media route
+                # above uses. A hardcoded `image/jpeg` mislabels a PNG, and a
+                # client that trusts the label saves the file instead of
+                # showing it - the one thing this branch exists to do.
+                media_type = mimetypes.guess_type(img_path.name)[0] or "application/octet-stream"
+                return FileResponse(
+                    img_path,
+                    media_type=media_type,
+                    filename=img_path.name,
+                )
 
     payload_out = _image_payload(request, result, payload.response_format)
     # A run that produced nothing is not a success. Returning 200 with an empty
@@ -335,10 +464,15 @@ async def openai_chat(payload: ChatCompletionRequest, request: Request):
 @app.post("/v1/generate/image")
 @app.post("/v1/image")
 @app.post("/api/v1/image")
-async def flow_image(payload: FlowImageRequest):
-    """Generate an image, speaking the engine's own vocabulary."""
+async def flow_image(payload: FlowImageRequest, request: Request):
+    """Generate an image, speaking the engine's own vocabulary.
+
+    Each entry in `files` is also given a `url` a client can fetch directly, so
+    a caller on a different machine from this process does not have to be told
+    where the file was written.
+    """
     try:
-        return await engine.generate_image(
+        result = await engine.generate_image(
             prompt=payload.prompt,
             aspect=payload.aspect,
             count=payload.count,
@@ -346,6 +480,12 @@ async def flow_image(payload: FlowImageRequest):
             all_accounts=payload.all_accounts,
             cookies=payload.cookies,
         )
+        # A caller that is not this process needs a URL, not a path.
+        if isinstance(result, dict) and "files" in result and isinstance(result["files"], list):
+            for f in result["files"]:
+                if isinstance(f, dict) and "path" in f:
+                    f["url"] = _media_url(request, f["path"])
+        return result
     except EngineError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -353,10 +493,10 @@ async def flow_image(payload: FlowImageRequest):
 @app.post("/v1/generate/video")
 @app.post("/v1/video")
 @app.post("/api/v1/video")
-async def flow_video(payload: FlowVideoRequest):
+async def flow_video(payload: FlowVideoRequest, request: Request):
     """Generate a video, speaking the engine's own vocabulary."""
     try:
-        return await engine.generate_video(
+        result = await engine.generate_video(
             prompt=payload.prompt,
             aspect=payload.aspect,
             duration=payload.duration,
@@ -366,6 +506,11 @@ async def flow_video(payload: FlowVideoRequest):
             all_accounts=payload.all_accounts,
             cookies=payload.cookies,
         )
+        if isinstance(result, dict) and "files" in result and isinstance(result["files"], list):
+            for f in result["files"]:
+                if isinstance(f, dict) and "path" in f:
+                    f["url"] = _media_url(request, f["path"])
+        return result
     except EngineError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -402,17 +547,392 @@ async def flow_projects(cookies: Optional[str] = None):
 @app.get("/v1/media/{filename:path}")
 @app.get("/api/v1/media/{filename:path}")
 async def flow_media(filename: str):
-    """Serve one generated file.
+    """Serve a generated media file, confined to a known output directory.
 
-    The name is resolved against the output directory and rejected if it escapes
-    it: this route takes a path from a URL, and `..` in one is the whole attack.
+    Candidates are tried in order and each must resolve *inside* the directory
+    it was found in. A string prefix is not that test: `/out` is a prefix of
+    `/out-evil`, so a sibling directory that merely shares a prefix would be
+    served. `Path.is_relative_to` compares path parts, so it cannot be fooled.
+
+    `engine.root` is read defensively. It is optional on the engine contract,
+    and a missing attribute must be a 404 here, not a 500.
+
+    There is deliberately no `__file__`-relative guess at an output directory:
+    the package's install layout has nothing to do with where the engine writes,
+    so such a candidate either duplicates a directory already in the list or
+    serves files from somewhere the engine never put them.
+
+    The content type comes from `mimetypes` rather than a hand-kept extension
+    table, because the preview page exists to render images inline - serving a
+    PNG as `application/octet-stream` makes the browser download it instead.
     """
-    candidate = (MEDIA_DIR / filename).resolve()
-    if candidate.parent != MEDIA_DIR.resolve() or not candidate.is_file():
-        raise HTTPException(status_code=404, detail="no such media file")
-    return FileResponse(candidate)
+    search_dirs: list[Path] = [MEDIA_DIR]
+    engine_root = getattr(engine, "root", None)
+    if engine_root is not None:
+        search_dirs.append(Path(engine_root) / "output")
+
+    for sdir in search_dirs:
+        base = Path(sdir).resolve()
+        try:
+            cand = (base / filename).resolve()
+        except (OSError, ValueError):
+            continue
+        if not cand.is_file() or not cand.is_relative_to(base):
+            continue
+        media_type = mimetypes.guess_type(cand.name)[0] or "application/octet-stream"
+        return FileResponse(cand, media_type=media_type, filename=cand.name)
+    raise HTTPException(status_code=404, detail="no such media file")
 
 
 @app.get("/health")
 async def health():
     return {"status": "ok", "engine": engine.available(), "binary": str(engine.binary)}
+
+
+# --------------------------------------------------------------------------- #
+# web preview dashboard
+# --------------------------------------------------------------------------- #
+
+PREVIEW_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flow Agent - OpenAI image generation preview</title>
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --accent: #e11d48;
+            --accent-hover: #be123c;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --border: #334155;
+            --success: #22c55e;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem 1rem;
+        }
+        .container {
+            width: 100%;
+            max-width: 840px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+        }
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        h1 {
+            font-size: 1.8rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+        .badge {
+            display: inline-block;
+            background: rgba(225, 29, 72, 0.2);
+            color: var(--accent);
+            padding: 0.2rem 0.6rem;
+            border-radius: 9999px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        p.subtitle {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: var(--text-primary);
+        }
+        textarea, select {
+            width: 100%;
+            padding: 0.85rem;
+            border-radius: 8px;
+            background: #0b1120;
+            border: 1px solid var(--border);
+            color: #fff;
+            font-size: 1rem;
+            resize: vertical;
+        }
+        textarea:focus, select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+        button.btn-generate {
+            width: 100%;
+            padding: 1rem;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.05rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+            margin-top: 0.5rem;
+        }
+        button.btn-generate:hover {
+            background: var(--accent-hover);
+        }
+        button.btn-generate:disabled {
+            background: #475569;
+            cursor: not-allowed;
+        }
+        .result-section {
+            margin-top: 2rem;
+            border-top: 1px solid var(--border);
+            padding-top: 2rem;
+            display: none;
+        }
+        .status-box {
+            padding: 0.85rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            font-size: 0.95rem;
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            color: #60a5fa;
+            text-align: center;
+        }
+        .image-container {
+            text-align: center;
+            background: #0b1120;
+            border-radius: 12px;
+            padding: 1rem;
+            border: 1px solid var(--border);
+        }
+        .image-container img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+        }
+        .action-bar {
+            margin-top: 1rem;
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+        }
+        .btn-action {
+            padding: 0.6rem 1.2rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            cursor: pointer;
+        }
+        .btn-action.download {
+            background: var(--success);
+            border-color: var(--success);
+            color: #fff;
+        }
+        .links {
+            margin-top: 2rem;
+            text-align: center;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+        .links a {
+            color: #38bdf8;
+            text-decoration: none;
+            margin: 0 0.5rem;
+        }
+        .links a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>⚡ Flow Agent <span class="badge">OpenAI-compatible</span></h1>
+            <p class="subtitle">Generate an image over <code>/v1/images/generations</code>, then preview or download it here.</p>
+        </header>
+
+        <form id="genForm">
+            <div class="form-group">
+                <label for="prompt">Prompt</label>
+                <textarea id="prompt" rows="3" required placeholder="e.g. a serene Japanese zen garden in autumn, cinematic lighting, 8k">a glowing crystal lotus on calm water</textarea>
+            </div>
+
+            <div class="row">
+                <div class="form-group">
+                    <label for="size">Size / aspect</label>
+                    <select id="size">
+                        <option value="1024x1024" selected>1024x1024 (square 1:1)</option>
+                        <option value="1792x1024">1792x1024 (wide 16:9)</option>
+                        <option value="1024x1792">1024x1792 (tall 9:16)</option>
+                        <option value="1365x1024">1365x1024 (landscape 4:3)</option>
+                        <option value="1024x1365">1024x1365 (portrait 3:4)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="format">Receive as</label>
+                    <select id="format">
+                        <option value="image" selected>Image bytes (preview/download at once)</option>
+                        <option value="url">OpenAI JSON (URL link)</option>
+                    </select>
+                </div>
+            </div>
+
+            <button type="submit" id="btnSubmit" class="btn-generate">🎨 Generate image (OpenAI route)</button>
+        </form>
+
+        <div id="resultSection" class="result-section">
+            <div id="statusBox" class="status-box">Generating...</div>
+            <div id="imageBox" class="image-container" style="display: none;">
+                <img id="resultImage" src="" alt="Generated image" />
+                <div class="action-bar">
+                    <a id="btnDownload" href="#" download="flow_image.jpg" class="btn-action download">📥 Download image</a>
+                    <a id="btnNewTab" href="#" target="_blank" class="btn-action">🔍 Open the original</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="links">
+            <a href="/docs" target="_blank">📖 Swagger UI docs</a> |
+            <a href="/redoc" target="_blank">📘 ReDoc</a> |
+            <a href="/health" target="_blank">🩺 Server health (/health)</a>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('genForm');
+        const btnSubmit = document.getElementById('btnSubmit');
+        const resultSection = document.getElementById('resultSection');
+        const statusBox = document.getElementById('statusBox');
+        const imageBox = document.getElementById('imageBox');
+        const resultImage = document.getElementById('resultImage');
+        const btnDownload = document.getElementById('btnDownload');
+        const btnNewTab = document.getElementById('btnNewTab');
+
+        let timerId = null;
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const prompt = document.getElementById('prompt').value.trim();
+            const size = document.getElementById('size').value;
+            const format = document.getElementById('format').value;
+
+            if (!prompt) return;
+
+            btnSubmit.disabled = true;
+            btnSubmit.innerText = '⏳ Generating... this takes a moment';
+            resultSection.style.display = 'block';
+            imageBox.style.display = 'none';
+
+            let startTime = Date.now();
+            statusBox.style.background = 'rgba(59, 130, 246, 0.1)';
+            statusBox.style.color = '#60a5fa';
+            statusBox.innerText = 'Asking Google Flow to generate... (0s elapsed)';
+
+            timerId = setInterval(() => {
+                const elapsed = Math.floor((Date.now() - startTime) / 1000);
+                statusBox.innerText = `Generating on Google Flow and downloading... (${elapsed}s elapsed)`;
+            }, 1000);
+
+            try {
+                const payload = {
+                    prompt: prompt,
+                    model: 'beluga',
+                    n: 1,
+                    size: size,
+                    response_format: format
+                };
+
+                const res = await fetch('/v1/images/generations', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                clearInterval(timerId);
+                const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
+
+                if (!res.ok) {
+                    const errText = await res.text();
+                    statusBox.style.background = 'rgba(239, 68, 68, 0.1)';
+                    statusBox.style.color = '#f87171';
+                    statusBox.innerText = `[generation failed ${res.status}] ${errText}`;
+                    btnSubmit.disabled = false;
+                    btnSubmit.innerText = '🎨 Generate image (OpenAI route)';
+                    return;
+                }
+
+                statusBox.style.background = 'rgba(34, 197, 94, 0.1)';
+                statusBox.style.color = '#4ade80';
+                statusBox.innerText = `✓ Done in ${elapsedSec}s`;
+
+                let imgUrl = '';
+                if (format === 'image') {
+                    const blob = await res.blob();
+                    imgUrl = URL.createObjectURL(blob);
+                } else {
+                    const data = await res.json();
+                    if (data.data && data.data[0] && data.data[0].url) {
+                        imgUrl = data.data[0].url;
+                    }
+                }
+
+                if (imgUrl) {
+                    resultImage.src = imgUrl;
+                    btnDownload.href = imgUrl;
+                    btnNewTab.href = imgUrl;
+                    imageBox.style.display = 'block';
+                }
+
+            } catch (err) {
+                clearInterval(timerId);
+                statusBox.style.background = 'rgba(239, 68, 68, 0.1)';
+                statusBox.style.color = '#f87171';
+                statusBox.innerText = `[request failed] ${err.message}`;
+            } finally {
+                btnSubmit.disabled = false;
+                btnSubmit.innerText = '🎨 Generate image (OpenAI route)';
+            }
+        });
+    </script>
+</body>
+</html>
+"""
+
+
+@app.get("/", response_class=HTMLResponse)
+@app.get("/preview", response_class=HTMLResponse)
+async def preview_dashboard():
+    """Generate over the OpenAI route from a browser and show the result at once."""
+    return HTMLResponse(content=PREVIEW_HTML)
