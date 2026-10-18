@@ -12,12 +12,13 @@ All endpoints assume the server is running at its default address.
 ## Table of Contents
 
 1. [Endpoints Overview](#1-endpoints-overview)
-2. [Native Flow Endpoints (`/api/v1/*`)](#2-native-flow-endpoints)
-3. [OpenAI-Compatible Endpoints (`/v1/*`)](#3-openai-compatible-endpoints)
-4. [System Endpoints](#4-system-endpoints)
-5. [Route Aliases](#5-route-aliases)
-6. [Error Responses](#6-error-responses)
-7. [Client Examples](#7-client-examples)
+2. [Authentication](#2-authentication)
+3. [Native Flow Endpoints (`/api/v1/*`)](#3-native-flow-endpoints)
+4. [OpenAI-Compatible Endpoints (`/v1/*`)](#4-openai-compatible-endpoints)
+5. [System Endpoints](#5-system-endpoints)
+6. [Route Aliases](#6-route-aliases)
+7. [Error Responses](#7-error-responses)
+8. [Client Examples](#8-client-examples)
 
 ---
 
@@ -47,11 +48,43 @@ All endpoints assume the server is running at its default address.
 | :--- | :--- | :--- |
 | `GET` | `/health` | Engine liveness check |
 
-> **Route Aliases**: Every `/api/v1/*` native endpoint is also reachable under `/v1/*` for convenience. See [Section 5](#5-route-aliases) for the full alias map.
+> **Route Aliases**: Every `/api/v1/*` native endpoint is also reachable under `/v1/*` for convenience. See [Section 6](#6-route-aliases) for the full alias map.
 
 ---
 
-## 2. Native Flow Endpoints
+## 2. Authentication
+
+Flow Agent supports optional API key authentication for production and public deployments.
+
+### Operating Modes
+
+- **Unauthenticated (Local / Dev Mode)**: If no API keys are registered and `FLOW_API_KEY` is unset, authentication is disabled so existing local workflows work without credentials.
+- **Enforced Mode**: Active when at least one API key is created via `python main.py key create` or the `FLOW_API_KEY` environment variable is set. Protected endpoints require a valid key.
+
+### Providing Credentials
+
+Credentials are accepted from headers only:
+1. **Authorization Header (OpenAI SDK Standard)**:
+   ```http
+   Authorization: Bearer sk-flow-...
+   ```
+2. **X-API-Key Header (Standard HTTP Client)**:
+   ```http
+   X-API-Key: sk-flow-...
+   ```
+
+*(Note: Credentials in query parameters like `?api_key=` are deliberately rejected to prevent key leakage in server access logs and `Referer` headers).*
+
+### Public Endpoints
+
+The following routes are always accessible without credentials:
+- `GET /health` (Liveness probe)
+- `GET /docs`, `GET /redoc`, `GET /openapi.json` (API documentation)
+- `GET /v1/media/*`, `GET /api/v1/media/*` (Generated media downloads)
+
+---
+
+## 3. Native Flow Endpoints
 
 ### 2.1 Generate Image
 
@@ -485,9 +518,11 @@ All errors return a JSON body with a `detail` field:
 | HTTP Status | Meaning |
 | :--- | :--- |
 | `400 Bad Request` | Invalid parameter value (e.g. unsupported image size) |
+| `401 Unauthorized` | API key missing, invalid, or revoked when authentication is enforced |
 | `404 Not Found` | Media file not found or path traversal blocked |
 | `422 Unprocessable Entity` | Request body validation failure (missing required field, out-of-range value) |
 | `502 Bad Gateway` | Google Flow upstream refused the generation request (anti-abuse / rate limit) — not a server error |
+| `503 Service Unavailable` | API key store corrupted or unreadable (Fail-Closed protection enforces request refusal) |
 
 > **Note on 502:** A `502` means the code path executed correctly and Google declined the request. Retrying after a cooldown of 30–120 s usually succeeds. Attaching the Flow Chrome extension and using `--captcha broker` significantly reduces the chance of refusal.
 

@@ -100,6 +100,68 @@ def cmd_projects(args) -> int:
     return 0
 
 
+def cmd_key(args) -> int:
+    """Create, list, revoke or delete the API keys this server accepts."""
+    from flow_agent import create_api_key, delete_api_key, list_api_keys, mask_key, revoke_api_key
+    from flow_agent.auth import KEY_PREFIX, KeyStoreError
+
+    def label(target: str) -> str:
+        # Echo a masked form of a key string; never print the secret itself.
+        return mask_key(target) if target.startswith(KEY_PREFIX) else target
+
+    action = args.key_action
+    try:
+        if action == "create":
+            entry = create_api_key(name=args.name)
+            key_value = entry["key"]
+            print("=" * 68)
+            print("  New Google Flow API key created.")
+            print("=" * 68)
+            print(f"  - Name    : {entry['name']}")
+            print(f"  - API Key : {key_value}")
+            print(f"  - Created : {entry['created_at']}")
+            print("=" * 68)
+            print("  [!] Store this key somewhere safe; it is not shown again.")
+            print("  OpenAI SDK example:")
+            print(f'    client = OpenAI(base_url="http://<host>:8001/v1", api_key="{key_value}")')
+            print("=" * 68)
+            return 0
+
+        if action == "list":
+            keys = list_api_keys()
+            if not keys:
+                print("No API keys registered. Create one with 'python main.py key create'.")
+                return 0
+            print(f"{'State':<8} | {'Name':<20} | {'API Key':<24} | Created")
+            print("-" * 75)
+            for k in keys:
+                state = "active" if k.get("active", True) else "revoked"
+                print(
+                    f"{state:<8} | {k.get('name', 'default'):<20} | "
+                    f"{mask_key(k.get('key', '')):<24} | {k.get('created_at', '')}"
+                )
+            return 0
+
+        if action == "revoke":
+            if revoke_api_key(args.target):
+                print(f"Revoked API key '{label(args.target)}'.")
+                return 0
+            print(f"error: no API key or alias named '{label(args.target)}'", file=sys.stderr)
+            return 1
+
+        if action == "delete":
+            if delete_api_key(args.target):
+                print(f"Deleted API key '{label(args.target)}'.")
+                return 0
+            print(f"error: no API key or alias named '{label(args.target)}'", file=sys.stderr)
+            return 1
+    except (KeyStoreError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    return 0
+
+
 # --------------------------------------------------------------------------- #
 # parser
 # --------------------------------------------------------------------------- #
@@ -196,7 +258,26 @@ def build_parser() -> argparse.ArgumentParser:
     projects.add_argument("--cookies", default=None)
     projects.set_defaults(func=cmd_projects)
 
+    key_parser = sub.add_parser("key", help="manage API keys for server authentication")
+    key_sub = key_parser.add_subparsers(dest="key_action", required=True)
+
+    key_create = key_sub.add_parser("create", help="generate a new API key")
+    key_create.add_argument("--name", default="default", help="name or alias for this key")
+    key_create.set_defaults(func=cmd_key)
+
+    key_list = key_sub.add_parser("list", help="list all registered API keys")
+    key_list.set_defaults(func=cmd_key)
+
+    key_revoke = key_sub.add_parser("revoke", help="deactivate an API key")
+    key_revoke.add_argument("target", help="API key string or name to deactivate")
+    key_revoke.set_defaults(func=cmd_key)
+
+    key_delete = key_sub.add_parser("delete", help="permanently delete an API key")
+    key_delete.add_argument("target", help="API key string or name to delete")
+    key_delete.set_defaults(func=cmd_key)
+
     return parser
+
 
 
 def main(argv=None) -> int:

@@ -170,6 +170,7 @@ Interactive docs open at **`http://127.0.0.1:8001/docs`**
 ```bash
 curl -X POST http://127.0.0.1:8001/api/v1/image \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-flow-..." \
   -d '{"prompt": "neon cyber dragon over misty mountains", "aspect": "16:9"}'
 ```
 
@@ -184,6 +185,22 @@ curl -X POST http://127.0.0.1:8001/api/v1/image \
 }
 ```
 
+### 🔒 API Key Authentication
+
+Protect your server when exposing it publicly (e.g. via Cloudflare Tunnel or reverse proxy):
+
+```bash
+# Generate a new API key
+python main.py key create --name "my-laptop"
+# → key: sk-flow-JNhS...Wxyz
+
+# List, revoke, or delete keys
+python main.py key list
+python main.py key revoke "my-laptop"
+```
+
+Once a key is created, all protected endpoints enforce authentication via `Authorization: Bearer <key>` or `X-API-Key: <key>`. Setting the `FLOW_API_KEY` environment variable also acts as a master key.
+
 ---
 
 ## OpenAI SDK — Drop-in Replacement
@@ -193,8 +210,8 @@ Change **one line** in your existing OpenAI code:
 ```python
 from openai import OpenAI
 
-# ← Change only this line
-client = OpenAI(base_url="http://127.0.0.1:8001/v1", api_key="not-needed")
+# ← Change only this line (use api_key="not-needed" if authentication is unconfigured)
+client = OpenAI(base_url="http://127.0.0.1:8001/v1", api_key="your-sk-flow-key")
 
 # Everything else stays exactly the same ↓
 response = client.images.generate(

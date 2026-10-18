@@ -17,6 +17,7 @@ Complete command-line documentation for **Flow Agent** and the underlying **Flow
    - [balance](#15-balance--account-credits)
    - [stats](#16-stats--generation-history)
    - [projects](#17-projects--list-flow-projects)
+   - [key](#18-key--manage-api-keys)
 2. [Engine Binary (`./bin/flow`)](#2-engine-binary-binflow)
 3. [Environment Variables](#3-environment-variables)
 4. [Exit Codes](#4-exit-codes)
@@ -237,6 +238,41 @@ python main.py projects --cookies cookies/account_abc.json
 
 ---
 
+### 1.8 `key` — Manage API Keys
+
+Manages API keys used to secure the REST API endpoints when exposing the server externally.
+
+```bash
+python main.py key {create,list,revoke,delete} [options]
+```
+
+#### Subcommands
+
+| Subcommand | Arguments | Description |
+| :--- | :--- | :--- |
+| `create` | `[--name NAME]` | Generate a new random secret API key (`sk-flow-...`) and register it. Refuses duplicate names. |
+| `list` | None | List all registered API keys with their status and masked secrets |
+| `revoke` | `TARGET` | Deactivate an API key by its secret value or unique alias name (soft delete) |
+| `delete` | `TARGET` | Permanently remove an API key from the local store (hard delete) |
+
+**Examples:**
+
+```bash
+# Generate a new API key with an alias
+python main.py key create --name "my-laptop"
+
+# List all keys
+python main.py key list
+
+# Revoke a key by alias or secret
+python main.py key revoke "my-laptop"
+
+# Permanently delete a key
+python main.py key delete "my-laptop"
+```
+
+---
+
 ## 2. Engine Binary (`./bin/flow`)
 
 The low-level Go binary (`flow-macos` on macOS, `flow-linux` on Linux, `flow-windows.exe` on Windows) is invoked automatically by the Python layer. It can also be used directly for advanced workflows.
@@ -351,6 +387,7 @@ Starts the WebSocket bridge on `ws://127.0.0.1:9222` that the Chrome Flow extens
 | Variable | Default | Description |
 | :--- | :--- | :--- |
 | `IMAGE_MODEL` | `narwhal` | Default image model key. Overrides the `--model` default without passing the flag. |
+| `FLOW_API_KEY` | *(empty)* | Optional master secret key. Enforces API authentication across all protected REST routes. |
 | `FLOW_COOKIES_DIR` | `cookies/` | Directory to scan for account JSON bundles. |
 | `FLOW_OUTPUT_DIR` | `output/` | Directory where generated images and videos are saved. |
 | `FLOW_DB_PATH` | `data/flow.db` | SQLite database path for generation history. |

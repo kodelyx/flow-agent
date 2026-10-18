@@ -54,5 +54,5 @@ Transform Google Flow image and video generation into a high-throughput, program
 ## 3. Future Roadmap
 
 - [ ] **Docker Containerization**: Multi-stage `Dockerfile` and `docker-compose.yml` for cloud deployments.
-- [ ] **Optional API Key Authentication**: Bearer token middleware for public-facing deployments.
+- [x] **Optional API Key Authentication**: Bearer token middleware, CLI key management, and constant-time verification for public-facing deployments.
 - [ ] **Web UI Dashboard**: Built-in visual prompt testing playground served on `/`.

@@ -14,11 +14,12 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from .auth import verify_api_key
 from .engine import EngineError, FlowEngine
 
 app = FastAPI(
@@ -260,7 +261,7 @@ def _sse(body: dict) -> StreamingResponse:
 # --------------------------------------------------------------------------- #
 
 
-@app.post("/v1/images/generations")
+@app.post("/v1/images/generations", dependencies=[Depends(verify_api_key)])
 async def openai_images(payload: ImageGenerationRequest, request: Request):
     """Generate an image from an OpenAI images payload."""
     aspect = SIZE_TO_ASPECT.get(payload.size.strip().lower())
@@ -295,7 +296,7 @@ async def openai_images(payload: ImageGenerationRequest, request: Request):
     return payload_out
 
 
-@app.post("/v1/chat/completions")
+@app.post("/v1/chat/completions", dependencies=[Depends(verify_api_key)])
 async def openai_chat(payload: ChatCompletionRequest, request: Request):
     """Generate from the last user turn and answer with a Markdown link."""
     prompt = _prompt_from_messages(payload.messages)
@@ -332,9 +333,9 @@ async def openai_chat(payload: ChatCompletionRequest, request: Request):
 # --------------------------------------------------------------------------- #
 
 
-@app.post("/v1/generate/image")
-@app.post("/v1/image")
-@app.post("/api/v1/image")
+@app.post("/v1/generate/image", dependencies=[Depends(verify_api_key)])
+@app.post("/v1/image", dependencies=[Depends(verify_api_key)])
+@app.post("/api/v1/image", dependencies=[Depends(verify_api_key)])
 async def flow_image(payload: FlowImageRequest):
     """Generate an image, speaking the engine's own vocabulary."""
     try:
@@ -350,9 +351,9 @@ async def flow_image(payload: FlowImageRequest):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@app.post("/v1/generate/video")
-@app.post("/v1/video")
-@app.post("/api/v1/video")
+@app.post("/v1/generate/video", dependencies=[Depends(verify_api_key)])
+@app.post("/v1/video", dependencies=[Depends(verify_api_key)])
+@app.post("/api/v1/video", dependencies=[Depends(verify_api_key)])
 async def flow_video(payload: FlowVideoRequest):
     """Generate a video, speaking the engine's own vocabulary."""
     try:
@@ -370,8 +371,8 @@ async def flow_video(payload: FlowVideoRequest):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@app.get("/v1/balance")
-@app.get("/api/v1/balance")
+@app.get("/v1/balance", dependencies=[Depends(verify_api_key)])
+@app.get("/api/v1/balance", dependencies=[Depends(verify_api_key)])
 async def flow_balance(refresh: bool = False):
     """Credits per account, cached by default and probed with `?refresh=true`."""
     try:
@@ -380,8 +381,8 @@ async def flow_balance(refresh: bool = False):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@app.get("/v1/stats")
-@app.get("/api/v1/stats")
+@app.get("/v1/stats", dependencies=[Depends(verify_api_key)])
+@app.get("/api/v1/stats", dependencies=[Depends(verify_api_key)])
 async def flow_stats():
     """Generation history and engine totals, read from the database."""
     try:
@@ -390,8 +391,8 @@ async def flow_stats():
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@app.get("/v1/projects")
-@app.get("/api/v1/projects")
+@app.get("/v1/projects", dependencies=[Depends(verify_api_key)])
+@app.get("/api/v1/projects", dependencies=[Depends(verify_api_key)])
 async def flow_projects(cookies: Optional[str] = None):
     try:
         return {"projects": await engine.get_projects(cookies=cookies)}
