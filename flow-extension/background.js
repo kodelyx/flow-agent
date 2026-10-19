@@ -484,6 +484,31 @@ function readProjectLinks() {
   return [...document.querySelectorAll('a[href*="/project/"]')].map((a) => a.href).slice(0, 40);
 }
 
+/** Extract character ingredients (`[character_id, name]`) visible in the active project page. */
+function readProjectCharacters() {
+  const found = [];
+  const seen = new Set();
+  const add = (id, name) => {
+    if (!id || !name || seen.has(id)) return;
+    seen.add(id);
+    found.push({ character_id: id, name, handle: `@${name}` });
+  };
+
+  document.querySelectorAll('[data-character-id], [data-ingredient-id]').forEach((el) => {
+    const id = el.getAttribute('data-character-id') || el.getAttribute('data-ingredient-id');
+    const name = (el.getAttribute('data-name') || el.textContent || '').replace(/^@/, '').trim();
+    add(id, name);
+  });
+
+  const scripts = [...document.querySelectorAll('script')].map((s) => s.textContent || '').join('\n');
+  const pairRegex = /\["([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})","([A-Za-z0-9_-]{1,40})"\]/gi;
+  let match;
+  while ((match = pairRegex.exec(scripts)) !== null) {
+    add(match[1], match[2]);
+  }
+  return found;
+}
+
 /**
  * The two values the app puts on every batchexecute request.
  *
@@ -493,7 +518,13 @@ function readProjectLinks() {
  */
 function readPageTokens() {
   const w = window.WIZ_global_data || {};
-  return { at: w.SNlM0e || '', fsid: w.FdrFJe || '' };
+  return {
+    at: w.SNlM0e || '',
+    fsid: w.FdrFJe || '',
+    wizPath: w.Im6cmf || '',
+    bl: w.cfb2h || '',
+    origin: window.location.origin || '',
+  };
 }
 
 /**
@@ -505,15 +536,81 @@ function readPageTokens() {
  * length is therefore not evidence that this worked.
  */
 async function mintCaptcha(siteKey, action) {
+  const realAssign = Object.assign;
   try {
     if (!window.grecaptcha || !window.grecaptcha.enterprise) {
       return { available: false, error: 'the page has no reCAPTCHA client loaded' };
     }
     await new Promise((resolve) => window.grecaptcha.enterprise.ready(resolve));
+    Object.assign = function (target, ...sources) {
+      const out = realAssign.call(this, target, ...sources);
+      if (out && typeof out === 'object' && out.action === 'extension_hijack_detected') {
+        out.action = action;
+      }
+      return out;
+    };
     const token = await window.grecaptcha.enterprise.execute(siteKey, { action });
     return { available: true, token };
   } catch (e) {
     return { available: true, error: String(e) };
+  } finally {
+    Object.assign = realAssign;
+  }
+}
+
+async function runPageBatchRpc(rpcid, freq, siteKey, captchaAction) {
+  const realAssign = Object.assign;
+  try {
+    const wiz = window.WIZ_global_data || {};
+    const at = wiz.SNlM0e || '';
+    const fsid = wiz.FdrFJe || '';
+    const bl = wiz.cfb2h || '';
+    if (!at) return { error: 'NO_AT_TOKEN' };
+
+    let finalFreq = freq;
+    let token = '';
+    if (captchaAction) {
+      if (!window.grecaptcha || !window.grecaptcha.enterprise) {
+        return { error: 'the page has no reCAPTCHA client loaded' };
+      }
+      await new Promise((resolve) => window.grecaptcha.enterprise.ready(resolve));
+      Object.assign = function (target, ...sources) {
+        const out = realAssign.call(this, target, ...sources);
+        if (out && typeof out === 'object' && out.action === 'extension_hijack_detected') {
+          out.action = captchaAction;
+        }
+        return out;
+      };
+      token = await window.grecaptcha.enterprise.execute(siteKey, { action: captchaAction });
+      Object.assign = realAssign;
+      finalFreq = freq.split('__CAPTCHA__').join(token);
+    }
+
+    const reqid = Math.floor(Math.random() * 900000) + 100000;
+    const url =
+      `/_/AiSandboxAngularFrontend/data/batchexecute?rpcids=${encodeURIComponent(rpcid)}` +
+      `&f.sid=${encodeURIComponent(fsid)}&bl=${encodeURIComponent(bl)}` +
+      `&hl=en&_reqid=${reqid}&rt=c`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+        'x-same-domain': '1',
+      },
+      body: new URLSearchParams({ 'f.req': finalFreq, at: String(at) }),
+    });
+    const raw = await resp.text();
+    return {
+      status_code: resp.status,
+      endpoint: `${window.location.origin}/_/AiSandboxAngularFrontend/data/batchexecute`,
+      raw: raw.slice(0, 2000),
+      captcha_minted: Boolean(token),
+    };
+  } catch (e) {
+    return { error: String(e) };
+  } finally {
+    Object.assign = realAssign;
   }
 }
 
@@ -562,8 +659,8 @@ async function dispatch(op, params = {}) {
           'ping', 'config.get', 'config.set', 'config.reset',
           'tabs.list', 'tabs.open', 'tab.attach', 'tab.detach', 'tab.current',
           'events.read', 'cookies.list', 'cookies.names',
-          'flow.fingerprint', 'flow.navigate', 'flow.projects',
-          'flow.captcha', 'flow.at', 'status',
+          'flow.fingerprint', 'flow.navigate', 'flow.projects', 'flow.characters',
+          'flow.captcha', 'flow.batch_rpc', 'flow.at', 'status',
         ],
       };
 
@@ -743,9 +840,18 @@ async function dispatch(op, params = {}) {
     case 'flow.projects':
       return await inPage(readProjectLinks);
 
+    case 'flow.characters':
+      return await inPage(readProjectCharacters);
+
     case 'flow.at': {
       const t = await inPage(readPageTokens);
-      return { at: String((t && t.at) || ''), fsid: String((t && t.fsid) || '') };
+      return {
+        at: String((t && t.at) || ''),
+        fsid: String((t && t.fsid) || ''),
+        wizPath: String((t && t.wizPath) || ''),
+        bl: String((t && t.bl) || ''),
+        origin: String((t && t.origin) || ''),
+      };
     }
 
     case 'flow.captcha': {
@@ -760,6 +866,16 @@ async function dispatch(op, params = {}) {
       const out = await inPage(mintCaptcha, [siteKey, action]);
       if (out && out.token) state.captchaMints++;
       return out || { available: false, error: 'the page returned nothing' };
+    }
+
+    case 'flow.batch_rpc': {
+      const rpcid = String(params.rpcid || '');
+      const freq = String(params.freq || '');
+      const action = String(params.action || 'VIDEO_GENERATION');
+      const siteKey = cfg.recaptchaSiteKey || params.siteKey || '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
+      const out = await inPage(runPageBatchRpc, [rpcid, freq, siteKey, action]);
+      if (out && out.captcha_minted) state.captchaMints++;
+      return out || { error: 'the page returned nothing' };
     }
 
     case 'status': {

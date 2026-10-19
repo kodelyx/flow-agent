@@ -278,3 +278,50 @@ def test_find_binary_selects_platform_executable(tmp_path, monkeypatch):
     mac_bin.write_text("dummy")
     monkeypatch.setattr("platform.system", lambda: "Darwin")
     assert FlowEngine._find_binary(tmp_path) == mac_bin
+
+
+def test_generate_video_with_character_and_start_image(tmp_path, monkeypatch):
+    """Proves video generation binding @xo character reference and a start image."""
+    image_file = tmp_path / "action_shot_xo.png"
+    image_file.write_bytes(b"\x89PNG\r\n\x1a\nfake-png-bytes")
+
+    engine = FlowEngine(root=str(tmp_path), binary=str(tmp_path / "flow"))
+    engine.characters.upsert(
+        name="xo",
+        character_id="82c2dd98-6939-4601-855e-ce1e680a7831",
+        project_id="test-project-123",
+    )
+
+    resolved_calls = []
+
+    async def mock_resolve_media_id(img_path, cookies=None):
+        resolved_calls.append(img_path)
+        return "media-xo-start-id-999"
+
+    async def mock_submit_r2v(segments, referenced_ids, aspect, duration, cookies, start_media_id=None):
+        return {
+            "status": "submitted",
+            "model": f"abra_r2v_{duration}",
+            "project_id": "test-project-123",
+            "character_ids": referenced_ids,
+            "segments": segments,
+            "start_image_id": start_media_id,
+            "operation_id": "op-test-video-888",
+        }
+
+    monkeypatch.setattr(engine, "_resolve_media_id", mock_resolve_media_id)
+    monkeypatch.setattr(engine, "_submit_character_r2v", mock_submit_r2v)
+
+    prompt = "@xo gently animates while looking forward"
+    result = await engine.generate_video(
+        prompt=prompt,
+        aspect="landscape",
+        duration="8s",
+        start_image=str(image_file),
+    )
+
+    assert result["status"] == "submitted"
+    assert result["start_image_id"] == "media-xo-start-id-999"
+    assert result["character_ids"] == ["82c2dd98-6939-4601-855e-ce1e680a7831"]
+    assert resolved_calls == [str(image_file)]
+

@@ -114,6 +114,20 @@ TOOLS: list[dict] = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "flow_upload_media",
+        "description": (
+            "Upload a local image or video on the fly into the active Flow project and "
+            "return its media_id for use in prompt start images or reference frames."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Absolute path to a local image or video."}
+            },
+            "required": ["file_path"],
+        },
+    },
+    {
         "name": "flow_upload_video",
         "description": (
             "Upload a local video into the account's project and return its media id, "
@@ -126,6 +140,22 @@ TOOLS: list[dict] = [
                 "file_path": {"type": "string", "description": "Absolute path to a local video."}
             },
             "required": ["file_path"],
+        },
+    },
+    {
+        "name": "flow_get_characters",
+        "description": (
+            "List registered characters for a Flow project, including their @handle "
+            "and character_id used for character-bound video generation."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "type": "string",
+                    "description": "Optional project UUID to filter characters.",
+                }
+            },
         },
     },
 ]
@@ -165,8 +195,12 @@ async def call_tool(name: str, arguments: dict) -> dict:
             result = await engine.get_balance(refresh=bool(arguments.get("refresh", False)))
         elif name == "flow_get_stats":
             result = await engine.get_stats()
+        elif name == "flow_upload_media":
+            result = await engine.upload_media(arguments["file_path"])
         elif name == "flow_upload_video":
             result = await engine.upload_video(arguments["file_path"])
+        elif name == "flow_get_characters":
+            result = await engine.get_characters(project_id=arguments.get("project_id"))
         else:
             return {**_text(f"unknown tool {name!r}"), "isError": True}
     except KeyError as exc:
