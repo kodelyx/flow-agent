@@ -100,6 +100,26 @@ def cmd_projects(args) -> int:
     return 0
 
 
+def cmd_characters(args) -> int:
+    if args.add:
+        if ":" not in args.add:
+            print("error: --add must be formatted as NAME:CHARACTER_UUID", file=sys.stderr)
+            return 2
+        name, character_id = args.add.split(":", 1)
+        _print(
+            asyncio.run(
+                engine.add_character(
+                    name=name,
+                    character_id=character_id,
+                    project_id=args.project or "",
+                )
+            )
+        )
+        return 0
+    _print(asyncio.run(engine.get_characters(project_id=args.project)))
+    return 0
+
+
 # --------------------------------------------------------------------------- #
 # parser
 # --------------------------------------------------------------------------- #
@@ -195,6 +215,15 @@ def build_parser() -> argparse.ArgumentParser:
     projects = sub.add_parser("projects", help="list the account's Flow projects")
     projects.add_argument("--cookies", default=None)
     projects.set_defaults(func=cmd_projects)
+
+    characters = sub.add_parser("characters", help="list or register Flow project characters")
+    characters.add_argument("--project", default=None, help="filter or assign by project ID")
+    characters.add_argument(
+        "--add",
+        default=None,
+        help="register a character in NAME:CHARACTER_UUID format",
+    )
+    characters.set_defaults(func=cmd_characters)
 
     return parser
 

@@ -104,6 +104,12 @@ class FlowVideoRequest(BaseModel):
     cookies: Optional[str] = None
 
 
+class FlowCharacterRequest(BaseModel):
+    name: str
+    character_id: str
+    project_id: str = ""
+
+
 class ChatMessage(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -399,6 +405,31 @@ async def flow_projects(cookies: Optional[str] = None):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@app.get("/v1/characters")
+@app.get("/api/v1/characters")
+async def flow_characters(project_id: Optional[str] = None):
+    """List registered characters for the Flow project."""
+    try:
+        return {"characters": await engine.get_characters(project_id=project_id)}
+    except EngineError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/v1/characters")
+@app.post("/api/v1/characters")
+async def flow_add_character(payload: FlowCharacterRequest):
+    """Register or update a Flow project character."""
+    try:
+        character = await engine.add_character(
+            name=payload.name,
+            character_id=payload.character_id,
+            project_id=payload.project_id,
+        )
+        return {"character": character}
+    except EngineError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @app.get("/v1/media/{filename:path}")
 @app.get("/api/v1/media/{filename:path}")
 async def flow_media(filename: str):
@@ -411,6 +442,17 @@ async def flow_media(filename: str):
     if candidate.parent != MEDIA_DIR.resolve() or not candidate.is_file():
         raise HTTPException(status_code=404, detail="no such media file")
     return FileResponse(candidate)
+
+
+@app.post("/v1/media/upload")
+@app.post("/api/v1/media/upload")
+async def flow_upload_media(file_path: str):
+    """Upload a local image or video on the fly and obtain its media_id."""
+    try:
+        media_id = await engine.upload_media(file_path=file_path)
+        return {"status": "ok", "media_id": media_id, "file_path": file_path}
+    except EngineError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/health")
